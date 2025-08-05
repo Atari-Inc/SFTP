@@ -43,9 +43,13 @@ export interface ActivityLog {
   action: string
   resource: string
   resourceId?: string
+  filePath?: string
   details: Record<string, any>
   ipAddress: string
   userAgent: string
+  locationCountry?: string
+  locationCity?: string
+  locationRegion?: string
   timestamp: string
   status: 'success' | 'failure'
 }

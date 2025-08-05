@@ -35,7 +35,7 @@ const Sidebar: React.FC = () => {
       <div className="flex items-center justify-center h-16 px-4 border-b border-gray-200">
         <div className="flex items-center">
           <Server className="h-8 w-8 text-primary-600" />
-          <span className="ml-2 text-xl font-bold text-gray-900">SFTP Admin</span>
+          <span className="ml-2 text-xl font-bold text-gray-900">Atari Files Transfer</span>
         </div>
       </div>
 

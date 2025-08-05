@@ -288,10 +288,16 @@ const ActivityLogs: React.FC = () => {
                       Resource
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      File Path
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       IP Address
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Location
                     </th>
                   </tr>
                 </thead>
@@ -326,6 +332,11 @@ const ActivityLogs: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {log.resource}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <div className="max-w-xs truncate" title={log.filePath || 'N/A'}>
+                          {log.filePath || 'N/A'}
+                        </div>
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           {getStatusIcon(log.status)}
@@ -338,6 +349,20 @@ const ActivityLogs: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {log.ipAddress}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <div className="max-w-xs">
+                          {log.locationCity && log.locationCountry ? (
+                            <div>
+                              <div className="font-medium">{log.locationCity}</div>
+                              <div className="text-xs text-gray-400">
+                                {log.locationRegion && `${log.locationRegion}, `}{log.locationCountry}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">Unknown</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -422,6 +447,28 @@ const ActivityLogs: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700">Resource ID</label>
                 <p className="text-sm text-gray-900">{selectedLog.resourceId || 'N/A'}</p>
               </div>
+              {selectedLog.filePath && (
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-700">File Path</label>
+                  <p className="text-sm text-gray-900 font-mono bg-gray-50 p-2 rounded border break-all">
+                    {selectedLog.filePath}
+                  </p>
+                </div>
+              )}
+              {(selectedLog.locationCity || selectedLog.locationCountry) && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Location</label>
+                  <div className="text-sm text-gray-900">
+                    {selectedLog.locationCity && (
+                      <div className="font-medium">{selectedLog.locationCity}</div>
+                    )}
+                    <div className="text-gray-600">
+                      {selectedLog.locationRegion && `${selectedLog.locationRegion}, `}
+                      {selectedLog.locationCountry}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             
             <div>

@@ -17,8 +17,8 @@ Base.metadata.create_all(bind=engine)
 
 # Create FastAPI app
 app = FastAPI(
-    title="SFTP Admin Dashboard API",
-    description="A comprehensive API for SFTP server management",
+    title="Atari Files Transfer API",
+    description="A comprehensive API for Atari Files Transfer - SFTP server management and file operations",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -45,7 +45,7 @@ app.include_router(api_router)
 @app.get("/")
 async def root():
     return {
-        "message": "SFTP Admin Dashboard API",
+        "message": "Atari Files Transfer API",
         "version": "1.0.0",
         "docs": "/docs"
     }

@@ -1,8 +1,8 @@
-# SFTP Admin Dashboard
+# Atari Files Transfer
 
-A comprehensive SFTP server management dashboard built with React and Node.js, featuring file management, user administration, activity logging, and real-time monitoring capabilities.
+A comprehensive SFTP server management system built with React and FastAPI, featuring file management, user administration, activity logging, and real-time monitoring capabilities for Atari file operations.
 
-![SFTP Admin Dashboard](https://img.shields.io/badge/React-18.2.0-blue?style=flat-square&logo=react)
+![Atari Files Transfer](https://img.shields.io/badge/React-18.2.0-blue?style=flat-square&logo=react)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0.2-blue?style=flat-square&logo=typescript)
 ![Node.js](https://img.shields.io/badge/Node.js-16+-green?style=flat-square&logo=node.js)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-blue?style=flat-square&logo=postgresql)
@@ -19,19 +19,19 @@ A comprehensive SFTP server management dashboard built with React and Node.js, f
 - **Dashboard Analytics**: Real-time system statistics and monitoring
 - **Responsive Design**: Mobile-friendly interface with adaptive layouts
 
-### Backend (Node.js + Express)
+### Backend (FastAPI + Python)
 - **RESTful API**: Well-structured API with proper error handling
-- **Database Integration**: PostgreSQL with Prisma ORM
+- **Database Integration**: PostgreSQL with SQLAlchemy ORM
 - **File Storage**: AWS S3 integration for scalable file storage
 - **Authentication**: JWT-based authentication with refresh tokens
-- **Activity Logging**: Comprehensive audit trail for all user actions
+- **Activity Logging**: Comprehensive audit trail with IP geolocation tracking
 - **Security**: Rate limiting, input validation, and security headers
-- **SFTP Integration**: Native SFTP server connectivity
+- **SFTP Integration**: AWS Transfer Family integration for secure file transfers
 
 ## 🏗️ Architecture
 
 ```
-SFTP-Admin-Dashboard/
+Atari-Files-Transfer/
 ├── client/                 # React frontend
 │   ├── src/
 │   │   ├── components/     # Reusable UI components
@@ -42,16 +42,16 @@ SFTP-Admin-Dashboard/
 │   │   └── utils/          # Utility functions
 │   ├── public/            # Static assets
 │   └── package.json       # Frontend dependencies
-├── server/                # Node.js backend
-│   ├── src/
-│   │   ├── controllers/   # Request handlers
-│   │   ├── middleware/    # Express middleware
-│   │   ├── models/        # Database models
-│   │   ├── routes/        # API routes
-│   │   ├── services/      # Business logic
+├── server/                # FastAPI backend
+│   ├── app/
+│   │   ├── api/           # API route handlers
+│   │   ├── core/          # Core functionality (auth, deps)
+│   │   ├── models/        # SQLAlchemy database models
+│   │   ├── schemas/       # Pydantic schemas
+│   │   ├── services/      # Business logic services
 │   │   └── utils/         # Utility functions
-│   ├── prisma/           # Database schema and migrations
-│   └── package.json      # Backend dependencies
+│   ├── alembic/          # Database migrations
+│   └── requirements.txt  # Python dependencies
 └── README.md
 ```
 
@@ -69,15 +69,15 @@ SFTP-Admin-Dashboard/
 - **Notifications**: React Hot Toast
 
 ### Backend
-- **Runtime**: Node.js
-- **Framework**: Express.js
+- **Runtime**: Python 3.11+
+- **Framework**: FastAPI
 - **Database**: PostgreSQL
-- **ORM**: Prisma
-- **Authentication**: JWT
+- **ORM**: SQLAlchemy
+- **Authentication**: JWT with OAuth2
 - **File Storage**: AWS S3
-- **SFTP Client**: ssh2-sftp-client
-- **Validation**: Joi
-- **Logging**: Winston
+- **SFTP Integration**: AWS Transfer Family
+- **Validation**: Pydantic
+- **Logging**: Python logging with activity tracking
 
 ### Infrastructure
 - **Database**: PostgreSQL (AWS RDS)
@@ -88,27 +88,27 @@ SFTP-Admin-Dashboard/
 ## 🚀 Quick Start
 
 ### Prerequisites
+- Python 3.11+ and pip
 - Node.js 16+ and npm/yarn
 - PostgreSQL database
-- AWS account (for S3 storage)
+- AWS account (for S3 storage and Transfer Family)
 
 ### Installation
 
 1. **Clone the repository**
 ```bash
 git clone <repository-url>
-cd SFTP-Admin-Dashboard
+cd Atari-Files-Transfer
 ```
 
 2. **Set up the backend**
 ```bash
 cd server
-npm install
+pip install -r requirements.txt
 cp .env.example .env
 # Configure your environment variables in .env
-npm run migrate
-npm run seed
-npm run dev
+alembic upgrade head
+python main.py
 ```
 
 3. **Set up the frontend**

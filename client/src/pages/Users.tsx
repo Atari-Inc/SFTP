@@ -14,7 +14,11 @@ import {
   Folder,
   FolderPlus,
   Home,
-  Settings
+  Settings,
+  Filter,
+  Download,
+  FileText,
+  RefreshCw
 } from 'lucide-react'
 import { userAPI, foldersAPI } from '@/services/api'
 import { User } from '@/types'
@@ -74,6 +78,15 @@ const Users: React.FC = () => {
     total: 0,
     totalPages: 0,
   })
+  const [showFilters, setShowFilters] = useState(false)
+  const [filters, setFilters] = useState({
+    search: '',
+    role: '',
+    status: '',
+    enableSftp: '',
+    startDate: '',
+    endDate: '',
+  })
 
   const {
     register,
@@ -92,7 +105,83 @@ const Users: React.FC = () => {
   useEffect(() => {
     loadUsers()
     loadAvailableFolders()
-  }, [pagination.page, searchQuery])
+  }, [pagination.page, searchQuery, filters])
+
+  const handleFilterChange = (key: string, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }))
+    setPagination(prev => ({ ...prev, page: 1 }))
+  }
+
+  const clearFilters = () => {
+    setFilters({
+      search: '',
+      role: '',
+      status: '',
+      enableSftp: '',
+      startDate: '',
+      endDate: '',
+    })
+    setPagination(prev => ({ ...prev, page: 1 }))
+  }
+
+  const handleExport = async (format: 'csv' | 'json') => {
+    try {
+      // Create export params from filters
+      const exportParams = {
+        ...Object.fromEntries(
+          Object.entries(filters).filter(([_, value]) => value !== '')
+        ),
+        format,
+      }
+      
+      // For now, we'll export current users data
+      // TODO: Create actual export API endpoint
+      const dataToExport = users.map(user => ({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+        enableSftp: user.folder_assignments?.length > 0 ? 'Yes' : 'No'
+      }))
+
+      if (format === 'csv') {
+        const csvContent = [
+          ['ID', 'Username', 'Email', 'Role', 'Status', 'Last Login', 'Created At', 'SFTP Enabled'].join(','),
+          ...dataToExport.map(user => [
+            user.id,
+            user.username,
+            user.email,
+            user.role,
+            user.isActive ? 'Active' : 'Inactive',
+            user.lastLogin ? formatDate(user.lastLogin) : 'Never',
+            formatDate(user.createdAt),
+            user.enableSftp
+          ].join(','))
+        ].join('\n')
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(blob)
+        link.download = `users-export-${new Date().toISOString().split('T')[0]}.csv`
+        link.click()
+      } else {
+        const jsonContent = JSON.stringify(dataToExport, null, 2)
+        const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' })
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(blob)
+        link.download = `users-export-${new Date().toISOString().split('T')[0]}.json`
+        link.click()
+      }
+
+      toast.success(`Users exported as ${format.toUpperCase()}`)
+    } catch (error) {
+      console.error('Export failed:', error)
+      toast.error('Failed to export users')
+    }
+  }
 
   const loadAvailableFolders = async () => {
     setLoadingFolders(true)
@@ -111,15 +200,52 @@ const Users: React.FC = () => {
   const loadUsers = async () => {
     setLoading(true)
     try {
+      // Combine searchQuery and filters.search
+      const searchTerm = filters.search || searchQuery
+      
       const response = await userAPI.getUsers({
         page: pagination.page,
         limit: pagination.limit,
-        search: searchQuery || undefined,
+        search: searchTerm || undefined,
+        // Note: Backend doesn't support these filters yet, but ready for future implementation
+        role: filters.role || undefined,
+        status: filters.status || undefined,
+        enableSftp: filters.enableSftp || undefined,
+        startDate: filters.startDate || undefined,
+        endDate: filters.endDate || undefined,
       })
-      setUsers(response.data.data)
+      let filteredUsers = response.data.data
+
+      // Apply client-side filtering until backend supports it
+      if (filters.role) {
+        filteredUsers = filteredUsers.filter(user => user.role === filters.role)
+      }
+      if (filters.status) {
+        const isActive = filters.status === 'active'
+        filteredUsers = filteredUsers.filter(user => user.isActive === isActive)
+      }
+      if (filters.enableSftp) {
+        const hasSftp = filters.enableSftp === 'yes'
+        filteredUsers = filteredUsers.filter(user => 
+          hasSftp ? (user.folder_assignments && user.folder_assignments.length > 0) : 
+                   (!user.folder_assignments || user.folder_assignments.length === 0)
+        )
+      }
+      if (filters.startDate) {
+        filteredUsers = filteredUsers.filter(user => 
+          new Date(user.createdAt) >= new Date(filters.startDate)
+        )
+      }
+      if (filters.endDate) {
+        filteredUsers = filteredUsers.filter(user => 
+          new Date(user.createdAt) <= new Date(filters.endDate)
+        )
+      }
+
+      setUsers(filteredUsers)
       setPagination(prev => ({
         ...prev,
-        total: response.data.pagination.total,
+        total: response.data.pagination.total, // Keep original total for now
         totalPages: response.data.pagination.totalPages,
       }))
     } catch (error) {
@@ -329,16 +455,132 @@ const Users: React.FC = () => {
           <h1 className="text-3xl font-bold text-gray-900">Users</h1>
           <p className="mt-2 text-gray-600">Manage system users and their permissions</p>
         </div>
-        <Button onClick={() => {
-          setShowCreateModal(true)
-          setCurrentUsername('')
-          setNewFolders([{ folder_path: '', permission: 'read' }])
-          reset()
-        }}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add User
-        </Button>
+        <div className="flex space-x-2">
+          <Button onClick={() => setShowFilters(!showFilters)} variant="outline">
+            <Filter className="h-4 w-4 mr-2" />
+            Filters
+          </Button>
+          <Button onClick={() => handleExport('csv')} variant="outline">
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
+          <Button onClick={() => handleExport('json')} variant="outline">
+            <FileText className="h-4 w-4 mr-2" />
+            Export JSON
+          </Button>
+          <Button onClick={loadUsers} variant="outline">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+          <Button onClick={() => {
+            setShowCreateModal(true)
+            setCurrentUsername('')
+            setNewFolders([{ folder_path: '', permission: 'read' }])
+            reset()
+          }}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add User
+          </Button>
+        </div>
       </div>
+
+      {showFilters && (
+        <div className="card">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Filters</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Search
+              </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={filters.search}
+                  onChange={(e) => handleFilterChange('search', e.target.value)}
+                  placeholder="Search users..."
+                  className="pl-10 input-field"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Role
+              </label>
+              <select
+                value={filters.role}
+                onChange={(e) => handleFilterChange('role', e.target.value)}
+                className="input-field"
+              >
+                <option value="">All Roles</option>
+                <option value="admin">Admin</option>
+                <option value="user">User</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Status
+              </label>
+              <select
+                value={filters.status}
+                onChange={(e) => handleFilterChange('status', e.target.value)}
+                className="input-field"
+              >
+                <option value="">All Status</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                SFTP Enabled
+              </label>
+              <select
+                value={filters.enableSftp}
+                onChange={(e) => handleFilterChange('enableSftp', e.target.value)}
+                className="input-field"
+              >
+                <option value="">All Users</option>
+                <option value="yes">SFTP Enabled</option>
+                <option value="no">SFTP Disabled</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Created After
+              </label>
+              <input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => handleFilterChange('startDate', e.target.value)}
+                className="input-field"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Created Before
+              </label>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => handleFilterChange('endDate', e.target.value)}
+                className="input-field"
+              />
+            </div>
+          </div>
+          
+          <div className="flex justify-end mt-4">
+            <Button onClick={clearFilters} variant="outline">
+              Clear Filters
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="flex justify-between items-center">
         <div className="relative flex-1 max-w-md">

@@ -181,19 +181,31 @@ async def export_activity_logs(
         # Write header
         writer.writerow([
             'Timestamp', 'Username', 'Action', 'Resource', 'Resource ID',
-            'Status', 'IP Address', 'User Agent', 'Details'
+            'File Path', 'Status', 'IP Address', 'Location', 'User Agent', 'Details'
         ])
         
         # Write data
         for log in logs:
+            # Format location
+            location_parts = []
+            if log.location_city:
+                location_parts.append(log.location_city)
+            if log.location_region:
+                location_parts.append(log.location_region)
+            if log.location_country:
+                location_parts.append(log.location_country)
+            location_str = ', '.join(location_parts) if location_parts else ''
+            
             writer.writerow([
                 log.timestamp.isoformat(),
                 log.username,
                 log.action.value,
                 log.resource,
                 log.resource_id or '',
+                log.file_path or '',
                 log.status.value,
                 log.ip_address,
+                location_str,
                 log.user_agent or '',
                 json.dumps(log.details) if log.details else ''
             ])
@@ -217,8 +229,14 @@ async def export_activity_logs(
                 'action': log.action.value,
                 'resource': log.resource,
                 'resource_id': log.resource_id,
+                'file_path': log.file_path,
                 'status': log.status.value,
                 'ip_address': log.ip_address,
+                'location': {
+                    'country': log.location_country,
+                    'region': log.location_region,
+                    'city': log.location_city
+                },
                 'user_agent': log.user_agent,
                 'details': log.details
             })

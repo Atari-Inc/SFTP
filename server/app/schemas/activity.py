@@ -16,6 +16,10 @@ class ActivityLogResponse(ActivityLogBase):
     details: Optional[Dict[str, Any]] = None
     ip_address: str
     user_agent: Optional[str]
+    file_path: Optional[str] = None
+    location_country: Optional[str] = None
+    location_city: Optional[str] = None
+    location_region: Optional[str] = None
     timestamp: datetime
     
     class Config:

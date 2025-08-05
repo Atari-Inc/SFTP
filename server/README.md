@@ -1,6 +1,6 @@
-# SFTP Admin Dashboard - Backend Server
+# Atari Files Transfer - Backend Server
 
-A Python FastAPI backend server for the SFTP Admin Dashboard application, providing REST APIs for user management, file operations, activity logging, and system monitoring.
+A Python FastAPI backend server for the Atari Files Transfer application, providing REST APIs for user management, file operations, activity logging, and system monitoring.
 
 ## 🚀 Features
 

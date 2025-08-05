@@ -34,6 +34,10 @@ class ActivityLog(Base):
     details = Column(JSON, nullable=True)
     ip_address = Column(String(45), nullable=False)
     user_agent = Column(String(500), nullable=True)
+    file_path = Column(String(1000), nullable=True)  # Track file paths for file operations
+    location_country = Column(String(100), nullable=True)  # Country from IP geolocation
+    location_city = Column(String(100), nullable=True)  # City from IP geolocation
+    location_region = Column(String(100), nullable=True)  # State/Region from IP geolocation
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     status = Column(Enum(ActivityStatus), nullable=False, index=True)
     
