@@ -7,6 +7,10 @@ from ..models.user import User
 from ..schemas.user import UserCreate, UserUpdate, UserResponse
 from ..core.dependencies import get_current_admin_user, get_current_user
 from ..core.security import get_password_hash
+from ..services.transfer_family import transfer_family_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -83,7 +87,7 @@ async def create_user(
             detail="Email already registered"
         )
     
-    # Create new user
+    # Create new user in database
     user = User(
         username=user_data.username,
         email=user_data.email,
@@ -94,6 +98,25 @@ async def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+    
+    # Create corresponding SFTP user in AWS Transfer Family
+    try:
+        sftp_result = await transfer_family_service.create_sftp_user(
+            username=user_data.username,
+            ssh_public_key=getattr(user_data, 'ssh_public_key', None)
+        )
+        logger.info(f"SFTP user created for {user_data.username}: {sftp_result}")
+        
+        # Store SFTP creation result in user metadata or logs
+        if sftp_result.get('status') == 'created':
+            logger.info(f"Successfully created SFTP user for {user_data.username}")
+        elif sftp_result.get('status') == 'already_exists':
+            logger.warning(f"SFTP user {user_data.username} already exists in Transfer Family")
+        
+    except Exception as e:
+        # Log the error but don't fail user creation if SFTP fails
+        logger.error(f"Failed to create SFTP user for {user_data.username}: {str(e)}")
+        # Could optionally store this error state in the user record for later retry
     
     return user
 
@@ -147,8 +170,26 @@ async def delete_user(
             detail="Cannot delete your own account"
         )
     
+    # Store username before deleting user
+    username_to_delete = user.username
+    
+    # Delete user from database
     db.delete(user)
     db.commit()
+    
+    # Delete corresponding SFTP user from AWS Transfer Family
+    try:
+        sftp_result = await transfer_family_service.delete_sftp_user(username_to_delete)
+        logger.info(f"SFTP user deleted for {username_to_delete}: {sftp_result}")
+        
+        if sftp_result.get('status') == 'deleted':
+            logger.info(f"Successfully deleted SFTP user {username_to_delete}")
+        elif sftp_result.get('status') == 'not_found':
+            logger.warning(f"SFTP user {username_to_delete} not found in Transfer Family")
+            
+    except Exception as e:
+        # Log the error but don't fail deletion if SFTP cleanup fails
+        logger.error(f"Failed to delete SFTP user for {username_to_delete}: {str(e)}")
     
     return {"message": "User deleted successfully"}
 
@@ -202,3 +243,85 @@ async def update_profile(
     db.refresh(current_user)
     
     return current_user
+
+@router.get("/{user_id}/sftp", response_model=dict)
+async def get_sftp_user_info(
+    user_id: UUID,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get SFTP user information from AWS Transfer Family (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    try:
+        sftp_info = await transfer_family_service.get_sftp_user(user.username)
+        return {
+            "user_id": user_id,
+            "username": user.username,
+            "sftp_info": sftp_info
+        }
+    except Exception as e:
+        logger.error(f"Failed to get SFTP info for {user.username}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get SFTP user information: {str(e)}"
+        )
+
+@router.put("/{user_id}/sftp/ssh-key", response_model=dict)
+async def update_sftp_ssh_key(
+    user_id: UUID,
+    ssh_key_data: dict,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Update SSH public key for SFTP user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    ssh_public_key = ssh_key_data.get("ssh_public_key")
+    if not ssh_public_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSH public key is required"
+        )
+    
+    try:
+        result = await transfer_family_service.update_sftp_user_ssh_key(
+            user.username,
+            ssh_public_key
+        )
+        return {
+            "user_id": user_id,
+            "username": user.username,
+            "ssh_key_result": result
+        }
+    except Exception as e:
+        logger.error(f"Failed to update SSH key for {user.username}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update SSH key: {str(e)}"
+        )
+
+@router.get("/sftp/list", response_model=dict)
+async def list_sftp_users(
+    current_user: User = Depends(get_current_admin_user)
+):
+    """List all SFTP users from AWS Transfer Family (admin only)"""
+    try:
+        result = await transfer_family_service.list_sftp_users()
+        return result
+    except Exception as e:
+        logger.error(f"Failed to list SFTP users: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list SFTP users: {str(e)}"
+        )

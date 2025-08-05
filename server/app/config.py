@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET: str
     AWS_ROLE_ARN: str
     
+    # AWS Transfer Family Configuration
+    AWS_TRANSFER_SERVER_ID: str
+    
     # SFTP Configuration
     SFTP_HOST: Optional[str] = None
     SFTP_PORT: int = 22
@@ -63,7 +66,7 @@ class Settings(BaseSettings):
     LOG_FILE: str = "logs/app.log"
     
     # CORS Configuration
-    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:3001"]
+    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
     
     class Config:
         env_file = ".env"

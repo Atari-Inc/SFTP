@@ -28,6 +28,16 @@ app = FastAPI(
 add_cors_middleware(app)
 app.add_middleware(LoggingMiddleware)
 
+# Add explicit CORS handling for development
+@app.middleware("http")
+async def add_cors_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
+
 # Include API routes
 app.include_router(api_router)
 

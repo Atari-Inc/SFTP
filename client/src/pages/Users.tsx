@@ -9,7 +9,8 @@ import {
   MoreVertical,
   Shield,
   Mail,
-  Calendar
+  Calendar,
+  Key
 } from 'lucide-react'
 import { userAPI } from '@/services/api'
 import { User } from '@/types'
@@ -25,6 +26,7 @@ interface UserFormData {
   email: string
   password: string
   role: 'admin' | 'user'
+  ssh_public_key?: string
 }
 
 const Users: React.FC = () => {
@@ -33,7 +35,9 @@ const Users: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [showSshKeyModal, setShowSshKeyModal] = useState(false)
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [sshKeyInput, setSshKeyInput] = useState('')
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
@@ -132,6 +136,26 @@ const Users: React.FC = () => {
       role: user.role,
     })
     setShowEditModal(true)
+  }
+
+  const openSshKeyModal = (user: User) => {
+    setSelectedUser(user)
+    setSshKeyInput('')
+    setShowSshKeyModal(true)
+  }
+
+  const handleUpdateSshKey = async () => {
+    if (!selectedUser || !sshKeyInput.trim()) return
+
+    try {
+      await userAPI.updateSftpSshKey(selectedUser.id, sshKeyInput.trim())
+      toast.success('SSH key updated successfully')
+      setShowSshKeyModal(false)
+      setSshKeyInput('')
+      setSelectedUser(null)
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to update SSH key')
+    }
   }
 
   const getRoleColor = (role: string) => {
@@ -268,6 +292,14 @@ const Users: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex items-center justify-end space-x-2">
                           <Button
+                            onClick={() => openSshKeyModal(user)}
+                            variant="outline"
+                            size="sm"
+                            title="Manage SSH Key"
+                          >
+                            <Key className="h-3 w-3" />
+                          </Button>
+                          <Button
                             onClick={() => openEditModal(user)}
                             variant="outline"
                             size="sm"
@@ -385,6 +417,19 @@ const Users: React.FC = () => {
             )}
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700">SSH Public Key (Optional)</label>
+            <textarea
+              {...register('ssh_public_key')}
+              className="mt-1 input-field"
+              rows={3}
+              placeholder="ssh-rsa AAAA... (optional - for SFTP access)"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Optional SSH public key for SFTP access. If provided, will be automatically configured in AWS Transfer Family.
+            </p>
+          </div>
+
           <div className="flex justify-end space-x-2">
             <Button type="button" variant="outline" onClick={() => setShowCreateModal(false)}>
               Cancel
@@ -467,6 +512,44 @@ const Users: React.FC = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={showSshKeyModal}
+        onClose={() => setShowSshKeyModal(false)}
+        title="Manage SSH Key"
+      >
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm text-gray-600 mb-4">
+              Update the SSH public key for <strong>{selectedUser?.username}</strong> in AWS Transfer Family SFTP.
+            </p>
+            
+            <label className="block text-sm font-medium text-gray-700">SSH Public Key</label>
+            <textarea
+              value={sshKeyInput}
+              onChange={(e) => setSshKeyInput(e.target.value)}
+              className="mt-1 input-field"
+              rows={4}
+              placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAA... user@hostname"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Paste the complete SSH public key. This will be configured for SFTP access in AWS Transfer Family.
+            </p>
+          </div>
+
+          <div className="flex justify-end space-x-2">
+            <Button type="button" variant="outline" onClick={() => setShowSshKeyModal(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpdateSshKey} 
+              disabled={!sshKeyInput.trim()}
+            >
+              Update SSH Key
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   )

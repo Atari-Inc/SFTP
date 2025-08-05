@@ -10,12 +10,14 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
+    ssh_public_key: Optional[str] = None
 
 class UserUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=50)
     email: Optional[EmailStr] = None
     role: Optional[UserRole] = None
     password: Optional[str] = Field(None, min_length=6)
+    ssh_public_key: Optional[str] = None
 
 class UserLogin(BaseModel):
     username: str

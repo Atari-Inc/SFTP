@@ -48,7 +48,7 @@ async def sync_transfer_family_users():
             # Create a new database user for this Transfer Family user
             try:
                 # Generate a default email and temporary password
-                email = f"{username}@company.com"  # You can modify this pattern
+                email = f"{username}@.com"  # You can modify this pattern
                 temp_password = f"TempPass123!"  # Users should change this on first login
                 
                 new_user = User(

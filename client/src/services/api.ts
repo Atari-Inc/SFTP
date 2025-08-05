@@ -85,7 +85,7 @@ export const fileAPI = {
   uploadFile: (formData: FormData, onUploadProgress?: (progress: number) => void) =>
     apiClient.post('/files/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      onUploadProgress: (progressEvent) => {
+      onUploadProgress: (progressEvent: { loaded: number; total?: number }) => {
         if (onUploadProgress && progressEvent.total) {
           const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total)
           onUploadProgress(progress)
@@ -117,16 +117,23 @@ export const userAPI = {
   
   getUser: (userId: string) => apiClient.get(`/users/${userId}`),
   
-  createUser: (userData: { username: string; email: string; password: string; role: string }) =>
+  createUser: (userData: { username: string; email: string; password: string; role: string; ssh_public_key?: string }) =>
     apiClient.post('/users', userData),
   
-  updateUser: (userId: string, userData: Partial<{ username: string; email: string; role: string }>) =>
+  updateUser: (userId: string, userData: Partial<{ username: string; email: string; role: string; ssh_public_key?: string }>) =>
     apiClient.put(`/users/${userId}`, userData),
   
   deleteUser: (userId: string) => apiClient.delete(`/users/${userId}`),
   
   updateProfile: (data: { username?: string; email?: string; currentPassword?: string; newPassword?: string }) =>
     apiClient.put('/users/profile', data),
+  
+  getSftpUserInfo: (userId: string) => apiClient.get(`/users/${userId}/sftp`),
+  
+  updateSftpSshKey: (userId: string, sshKey: string) =>
+    apiClient.put(`/users/${userId}/sftp/ssh-key`, { ssh_public_key: sshKey }),
+  
+  listSftpUsers: () => apiClient.get('/users/sftp/list'),
 }
 
 export const activityAPI = {
