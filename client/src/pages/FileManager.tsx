@@ -117,7 +117,7 @@ const FileManager: React.FC = () => {
   }
 
   const pathSegments = currentPath.split('/').filter(Boolean)
-  const filteredFiles = files.filter(file =>
+  const filteredFiles = (files || []).filter(file =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 

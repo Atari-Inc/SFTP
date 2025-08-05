@@ -122,11 +122,14 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     dispatch({ type: 'SET_LOADING', payload: true })
     try {
       const response = await fileAPI.listFiles(path)
-      dispatch({ type: 'SET_FILES', payload: response.data })
+      // Backend returns { data: [...], total: number, path: string }
+      const filesData = response.data.data || response.data || []
+      dispatch({ type: 'SET_FILES', payload: Array.isArray(filesData) ? filesData : [] })
       dispatch({ type: 'SET_CURRENT_PATH', payload: path })
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || 'Failed to load files'
       dispatch({ type: 'SET_ERROR', payload: errorMessage })
+      dispatch({ type: 'SET_FILES', payload: [] }) // Reset to empty array on error
       toast.error(errorMessage)
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false })

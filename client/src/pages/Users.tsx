@@ -243,27 +243,27 @@ const Users: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(user.isActive)}`}>
-                          {user.isActive ? (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(user.is_active)}`}>
+                          {user.is_active ? (
                             <UserCheck className="h-3 w-3 mr-1" />
                           ) : (
                             <UserX className="h-3 w-3 mr-1" />
                           )}
-                          {user.isActive ? 'Active' : 'Inactive'}
+                          {user.is_active ? 'Active' : 'Inactive'}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {user.lastLogin ? (
+                        {user.last_login ? (
                           <div className="flex items-center">
                             <Calendar className="h-3 w-3 mr-1" />
-                            {formatDate(user.lastLogin, 'relative')}
+                            {formatDate(user.last_login, 'relative')}
                           </div>
                         ) : (
                           'Never'
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {formatDate(user.createdAt)}
+                        {formatDate(user.created_at)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex items-center justify-end space-x-2">
