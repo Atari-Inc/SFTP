@@ -3,10 +3,22 @@ export interface User {
   username: string
   email: string
   role: 'admin' | 'user'
-  isActive: boolean
-  lastLogin?: string
-  createdAt: string
-  updatedAt: string
+  is_active: boolean
+  home_directory?: string
+  last_login?: string
+  created_at: string
+  updated_at: string
+  folder_assignments?: FolderAssignment[]
+}
+
+export interface FolderAssignment {
+  id: string
+  user_id: string
+  folder_path: string
+  permission: 'read' | 'write' | 'full'
+  is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface FileItem {

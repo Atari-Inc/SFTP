@@ -4,7 +4,8 @@ from typing import List, Optional
 from uuid import UUID
 from ..database import get_db
 from ..models.user import User
-from ..schemas.user import UserCreate, UserUpdate, UserResponse
+from ..models.user_folder import UserFolder
+from ..schemas.user import UserCreate, UserUpdate, UserResponse, FolderAssignmentCreate
 from ..core.dependencies import get_current_admin_user, get_current_user
 from ..core.security import get_password_hash
 from ..services.transfer_family import transfer_family_service
@@ -92,12 +93,24 @@ async def create_user(
         username=user_data.username,
         email=user_data.email,
         password_hash=get_password_hash(user_data.password),
-        role=user_data.role
+        role=user_data.role,
+        home_directory=user_data.home_directory or f"/home/{user_data.username}"
     )
     
     db.add(user)
     db.commit()
     db.refresh(user)
+    
+    # Create folder assignments if provided
+    if user_data.folder_assignments:
+        for folder_assignment in user_data.folder_assignments:
+            user_folder = UserFolder(
+                user_id=user.id,
+                folder_path=folder_assignment.folder_path,
+                permission=folder_assignment.permission
+            )
+            db.add(user_folder)
+        db.commit()
     
     # Create corresponding SFTP user in AWS Transfer Family
     try:
@@ -325,3 +338,65 @@ async def list_sftp_users(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list SFTP users: {str(e)}"
         )
+
+@router.put("/{user_id}/folders", response_model=dict)
+async def update_user_folders(
+    user_id: UUID,
+    folder_assignments: List[FolderAssignmentCreate],
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Update folder assignments for a user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Delete existing folder assignments
+    db.query(UserFolder).filter(UserFolder.user_id == user_id).delete()
+    
+    # Create new folder assignments
+    for folder_assignment in folder_assignments:
+        user_folder = UserFolder(
+            user_id=user_id,
+            folder_path=folder_assignment.folder_path,
+            permission=folder_assignment.permission
+        )
+        db.add(user_folder)
+    
+    db.commit()
+    
+    return {
+        "message": "Folder assignments updated successfully",
+        "user_id": user_id,
+        "folder_count": len(folder_assignments)
+    }
+
+@router.get("/{user_id}/folders", response_model=List[dict])
+async def get_user_folders(
+    user_id: UUID,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get folder assignments for a user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    folders = db.query(UserFolder).filter(UserFolder.user_id == user_id).all()
+    
+    return [
+        {
+            "id": str(folder.id),
+            "folder_path": folder.folder_path,
+            "permission": folder.permission,
+            "is_active": folder.is_active,
+            "created_at": folder.created_at
+        }
+        for folder in folders
+    ]

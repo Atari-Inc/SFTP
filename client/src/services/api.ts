@@ -117,7 +117,15 @@ export const userAPI = {
   
   getUser: (userId: string) => apiClient.get(`/users/${userId}`),
   
-  createUser: (userData: { username: string; email: string; password: string; role: string; ssh_public_key?: string }) =>
+  createUser: (userData: { 
+    username: string; 
+    email: string; 
+    password: string; 
+    role: string; 
+    ssh_public_key?: string;
+    home_directory?: string;
+    folder_assignments?: Array<{ folder_path: string; permission: string }>;
+  }) =>
     apiClient.post('/users', userData),
   
   updateUser: (userId: string, userData: Partial<{ username: string; email: string; role: string; ssh_public_key?: string }>) =>
@@ -134,6 +142,11 @@ export const userAPI = {
     apiClient.put(`/users/${userId}/sftp/ssh-key`, { ssh_public_key: sshKey }),
   
   listSftpUsers: () => apiClient.get('/users/sftp/list'),
+  
+  updateUserFolders: (userId: string, folders: Array<{ folder_path: string; permission: string }>) =>
+    apiClient.put(`/users/${userId}/folders`, folders),
+  
+  getUserFolders: (userId: string) => apiClient.get(`/users/${userId}/folders`),
 }
 
 export const activityAPI = {
