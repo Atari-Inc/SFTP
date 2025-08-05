@@ -143,6 +143,8 @@ export const userAPI = {
   
   listSftpUsers: () => apiClient.get('/users/sftp/list'),
   
+  generateSshKey: (data: { username: string }) => apiClient.post('/users/generate-ssh-key', data),
+  
   updateUserFolders: (userId: string, folders: Array<{ folder_path: string; permission: string }>) =>
     apiClient.put(`/users/${userId}/folders`, folders),
   

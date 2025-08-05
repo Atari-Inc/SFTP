@@ -13,6 +13,8 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
     ssh_public_key: Optional[str] = None
     folder_assignments: Optional[List['FolderAssignmentCreate']] = []
+    enable_sftp: Optional[bool] = False
+    private_key: Optional[str] = None
 
 class UserUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=50)

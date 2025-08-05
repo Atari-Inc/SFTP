@@ -36,6 +36,8 @@ interface UserFormData {
     folder_path: string
     permission: string
   }>
+  enable_sftp?: boolean
+  private_key?: string
 }
 
 interface FolderAssignment {
@@ -63,6 +65,9 @@ const Users: React.FC = () => {
   const [loadingFolders, setLoadingFolders] = useState(false)
   const [showAllFoldersModal, setShowAllFoldersModal] = useState(false)
   const [selectedUserFolders, setSelectedUserFolders] = useState<any>(null)
+  const [enableSftp, setEnableSftp] = useState(false)
+  const [generatedSshKeys, setGeneratedSshKeys] = useState<{publicKey: string, privateKey: string} | null>(null)
+  const [generatingKeys, setGeneratingKeys] = useState(false)
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
@@ -130,13 +135,19 @@ const Users: React.FC = () => {
       const userData = {
         ...data,
         home_directory: data.home_directory || `/home/${data.username}`,
-        folder_assignments: newFolders.filter(f => f.folder_path.trim())
+        folder_assignments: newFolders.filter(f => f.folder_path.trim()),
+        ssh_public_key: generatedSshKeys?.publicKey || data.ssh_public_key,
+        enable_sftp: enableSftp,
+        private_key: generatedSshKeys?.privateKey // Store private key with user for later access
       }
       await userAPI.createUser(userData)
       toast.success('User created successfully')
       setShowCreateModal(false)
       reset()
       setNewFolders([{ folder_path: '', permission: 'read' }])
+      setEnableSftp(false)
+      setGeneratedSshKeys(null)
+      setCurrentUsername('')
       loadUsers()
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to create user')
@@ -251,6 +262,37 @@ const Users: React.FC = () => {
       setSelectedUser(null)
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to update SSH key')
+    }
+  }
+
+  const generateSshKeys = async () => {
+    setGeneratingKeys(true)
+    try {
+      // For now, we'll use a simple client-side key generation approach
+      // In production, you might want to use a proper crypto library
+      const keyPair = await generateRSAKeyPair()
+      setGeneratedSshKeys(keyPair)
+      toast.success('SSH keys generated successfully!')
+    } catch (error) {
+      toast.error('Failed to generate SSH keys')
+      console.error('Key generation error:', error)
+    } finally {
+      setGeneratingKeys(false)
+    }
+  }
+
+  const generateRSAKeyPair = async (): Promise<{publicKey: string, privateKey: string}> => {
+    const username = currentUsername || 'user'
+    
+    try {
+      const response = await userAPI.generateSshKey({ username })
+      return {
+        publicKey: response.data.public_key,
+        privateKey: response.data.private_key
+      }
+    } catch (error) {
+      console.error('Failed to generate SSH keys:', error)
+      throw new Error('Failed to generate SSH keys. Please try again.')
     }
   }
 
@@ -658,17 +700,155 @@ const Users: React.FC = () => {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700">SSH Public Key (Optional)</label>
-            <textarea
-              {...register('ssh_public_key')}
-              className="mt-1 input-field"
-              rows={3}
-              placeholder="ssh-rsa AAAA... (optional - for SFTP access)"
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              Optional SSH public key for SFTP access. If provided, will be automatically configured in AWS Transfer Family.
-            </p>
+          <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+            <div className="flex items-center justify-between mb-4">
+              <label className="block text-sm font-medium text-gray-700 flex items-center">
+                <Key className="h-4 w-4 mr-2" />
+                SFTP Access Configuration
+              </label>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="enableSftp"
+                  checked={enableSftp}
+                  onChange={(e) => {
+                    setEnableSftp(e.target.checked)
+                    if (!e.target.checked) {
+                      setGeneratedSshKeys(null)
+                    }
+                  }}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label htmlFor="enableSftp" className="ml-2 text-sm text-gray-700">
+                  Enable SFTP access for this user
+                </label>
+              </div>
+
+              {enableSftp && (
+                <div className="space-y-4 pl-6 border-l-2 border-blue-200">
+                  <div className="bg-blue-50 p-3 rounded-md">
+                    <div className="flex items-start">
+                      <div className="flex-shrink-0">
+                        <Key className="h-4 w-4 text-blue-600 mt-0.5" />
+                      </div>
+                      <div className="ml-2 text-sm text-blue-800">
+                        <p className="font-medium">SSH Key Generation</p>
+                        <p className="mt-1">
+                          Generate SSH keys for secure SFTP access. The public key will be saved to AWS Transfer Family, and the private key will be available for download.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    {!generatedSshKeys ? (
+                      <Button
+                        type="button"
+                        onClick={generateSshKeys}
+                        loading={generatingKeys}
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        <Key className="h-4 w-4 mr-2" />
+                        {generatingKeys ? 'Generating SSH Keys...' : 'Generate SSH Key Pair'}
+                      </Button>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-md">
+                          <div className="flex items-center">
+                            <div className="flex-shrink-0">
+                              <div className="h-8 w-8 bg-green-100 rounded-full flex items-center justify-center">
+                                <Key className="h-4 w-4 text-green-600" />
+                              </div>
+                            </div>
+                            <div className="ml-3">
+                              <p className="text-sm font-medium text-green-800">SSH Keys Generated Successfully</p>
+                              <p className="text-xs text-green-600">Public key will be configured in AWS Transfer Family</p>
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={() => setGeneratedSshKeys(null)}
+                            variant="outline"
+                            size="sm"
+                            className="text-green-700 border-green-300 hover:bg-green-100"
+                          >
+                            Regenerate
+                          </Button>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Public Key (saved to AWS Transfer Family)</label>
+                            <textarea
+                              value={generatedSshKeys.publicKey}
+                              readOnly
+                              className="w-full p-2 text-xs font-mono bg-gray-100 border border-gray-300 rounded-md resize-none"
+                              rows={2}
+                            />
+                          </div>
+                          
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Private Key (download and save securely)</label>
+                            <div className="relative">
+                              <textarea
+                                value={generatedSshKeys.privateKey}
+                                readOnly
+                                className="w-full p-2 text-xs font-mono bg-gray-100 border border-gray-300 rounded-md resize-none"
+                                rows={4}
+                              />
+                              <Button
+                                type="button"
+                                onClick={() => {
+                                  const blob = new Blob([generatedSshKeys.privateKey], { type: 'text/plain' })
+                                  const url = URL.createObjectURL(blob)
+                                  const a = document.createElement('a')
+                                  a.href = url
+                                  a.download = `${currentUsername || 'user'}_sftp_private_key.pem`
+                                  document.body.appendChild(a)
+                                  a.click()
+                                  document.body.removeChild(a)
+                                  URL.revokeObjectURL(url)
+                                  toast.success('Private key downloaded successfully')
+                                }}
+                                variant="outline"
+                                size="sm"
+                                className="absolute top-1 right-1 text-xs"
+                              >
+                                Download
+                              </Button>
+                            </div>
+                            <p className="text-xs text-amber-600 mt-1 flex items-center">
+                              <span className="mr-1">⚠️</span>
+                              Save this private key securely. It will not be shown again.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Or paste existing SSH Public Key</label>
+                    <textarea
+                      {...register('ssh_public_key')}
+                      className="mt-1 input-field"
+                      rows={2}
+                      placeholder="ssh-rsa AAAA... (optional - if you have an existing key)"
+                      disabled={!!generatedSshKeys}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {generatedSshKeys 
+                        ? 'Using generated SSH key above. Clear generated keys to use a custom key.' 
+                        : 'Optional: Paste an existing SSH public key instead of generating new ones.'
+                      }
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">

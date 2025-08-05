@@ -9,6 +9,7 @@ from ..schemas.user import UserCreate, UserUpdate, UserResponse, FolderAssignmen
 from ..core.dependencies import get_current_admin_user, get_current_user
 from ..core.security import get_password_hash
 from ..services.transfer_family import transfer_family_service
+from ..utils.ssh_key_generator import ssh_key_generator
 import logging
 
 logger = logging.getLogger(__name__)
@@ -95,13 +96,42 @@ async def create_user(
             detail="Email already registered"
         )
     
+    # Validate SSH public key if provided
+    ssh_public_key = user_data.ssh_public_key
+    private_key = user_data.private_key
+    
+    if user_data.enable_sftp:
+        if ssh_public_key:
+            # Validate provided SSH key
+            if not ssh_key_generator.validate_ssh_public_key(ssh_public_key):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid SSH public key format"
+                )
+        else:
+            # Generate SSH key pair if SFTP is enabled but no key provided
+            try:
+                key_pair = ssh_key_generator.generate_rsa_key_pair(user_data.username)
+                ssh_public_key = key_pair['public_key']
+                private_key = key_pair['private_key']
+                logger.info(f"Auto-generated SSH key pair for user: {user_data.username}")
+            except Exception as e:
+                logger.error(f"Failed to auto-generate SSH key for {user_data.username}: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to generate SSH key pair"
+                )
+    
     # Create new user in database
     user = User(
         username=user_data.username,
         email=user_data.email,
         password_hash=get_password_hash(user_data.password),
         role=user_data.role,
-        home_directory=user_data.home_directory or f"/home/{user_data.username}"
+        home_directory=user_data.home_directory or f"/home/{user_data.username}",
+        enable_sftp=user_data.enable_sftp or False,
+        ssh_public_key=ssh_public_key,
+        private_key=private_key
     )
     
     db.add(user)
@@ -119,24 +149,27 @@ async def create_user(
             db.add(user_folder)
         db.commit()
     
-    # Create corresponding SFTP user in AWS Transfer Family
-    try:
-        sftp_result = await transfer_family_service.create_sftp_user(
-            username=user_data.username,
-            ssh_public_key=getattr(user_data, 'ssh_public_key', None)
-        )
-        logger.info(f"SFTP user created for {user_data.username}: {sftp_result}")
-        
-        # Store SFTP creation result in user metadata or logs
-        if sftp_result.get('status') == 'created':
-            logger.info(f"Successfully created SFTP user for {user_data.username}")
-        elif sftp_result.get('status') == 'already_exists':
-            logger.warning(f"SFTP user {user_data.username} already exists in Transfer Family")
-        
-    except Exception as e:
-        # Log the error but don't fail user creation if SFTP fails
-        logger.error(f"Failed to create SFTP user for {user_data.username}: {str(e)}")
-        # Could optionally store this error state in the user record for later retry
+    # Create corresponding SFTP user in AWS Transfer Family if SFTP is enabled
+    if user_data.enable_sftp and ssh_public_key:
+        try:
+            sftp_result = await transfer_family_service.create_sftp_user(
+                username=user_data.username,
+                ssh_public_key=ssh_public_key
+            )
+            logger.info(f"SFTP user created for {user_data.username}: {sftp_result}")
+            
+            # Store SFTP creation result in user metadata or logs
+            if sftp_result.get('status') == 'created':
+                logger.info(f"Successfully created SFTP user for {user_data.username}")
+            elif sftp_result.get('status') == 'already_exists':
+                logger.warning(f"SFTP user {user_data.username} already exists in Transfer Family")
+            
+        except Exception as e:
+            # Log the error but don't fail user creation if SFTP fails
+            logger.error(f"Failed to create SFTP user for {user_data.username}: {str(e)}")
+            # Could optionally store this error state in the user record for later retry
+    elif user_data.enable_sftp:
+        logger.warning(f"SFTP enabled for {user_data.username} but no SSH public key was provided or generated")
     
     return user
 
@@ -407,3 +440,42 @@ async def get_user_folders(
         }
         for folder in folders
     ]
+
+@router.post("/generate-ssh-key", response_model=dict)
+async def generate_ssh_key(
+    username_data: dict,
+    current_user: User = Depends(get_current_admin_user)
+):
+    """Generate a new SSH key pair for a user (admin only)"""
+    username = username_data.get('username')
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username is required"
+        )
+    
+    try:
+        key_pair = ssh_key_generator.generate_rsa_key_pair(username)
+        
+        # Validate the generated public key
+        if not ssh_key_generator.validate_ssh_public_key(key_pair['public_key']):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Generated SSH key validation failed"
+            )
+        
+        logger.info(f"Generated SSH key pair for user: {username}")
+        
+        return {
+            "username": username,
+            "public_key": key_pair['public_key'],
+            "private_key": key_pair['private_key'],
+            "message": "SSH key pair generated successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to generate SSH key for {username}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate SSH key: {str(e)}"
+        )
