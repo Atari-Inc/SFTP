@@ -526,8 +526,10 @@ const Users: React.FC = () => {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         title="Create New User"
+        size="xl"
       >
-        <form onSubmit={handleSubmit(handleCreateUser)} className="space-y-4">
+        <div className="max-h-[80vh] overflow-y-auto pr-2 scrollbar-hide">
+          <form onSubmit={handleSubmit(handleCreateUser)} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">Username</label>
             <input
@@ -680,9 +682,9 @@ const Users: React.FC = () => {
               </span>
             </div>
             
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-hide">
               {newFolders.map((folder, index) => (
-                <div key={index} className="bg-white border border-gray-200 rounded-md p-3">
+                <div key={index} className="bg-white border border-gray-200 rounded-md p-3 min-h-[140px]">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-gray-600">
                       Folder Assignment #{index + 1}
@@ -782,6 +784,7 @@ const Users: React.FC = () => {
             </Button>
           </div>
         </form>
+        </div>
       </Modal>
 
       <Modal
