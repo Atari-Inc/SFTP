@@ -61,6 +61,8 @@ const Users: React.FC = () => {
   const [currentUsername, setCurrentUsername] = useState('')
   const [availableFolders, setAvailableFolders] = useState<Array<{path: string, name: string, type: string}>>([])
   const [loadingFolders, setLoadingFolders] = useState(false)
+  const [showAllFoldersModal, setShowAllFoldersModal] = useState(false)
+  const [selectedUserFolders, setSelectedUserFolders] = useState<any>(null)
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
@@ -94,13 +96,8 @@ const Users: React.FC = () => {
       setAvailableFolders(response.data)
     } catch (error) {
       console.error('Failed to load folders:', error)
-      // Fallback to default folders if S3 fetch fails
-      setAvailableFolders([
-        { path: '/shared/documents', name: 'Shared Documents', type: 'default' },
-        { path: '/shared/uploads', name: 'Shared Uploads', type: 'default' },
-        { path: '/projects/common', name: 'Common Projects', type: 'default' },
-        { path: '/backup/shared', name: 'Shared Backup', type: 'default' },
-      ])
+      // Fallback to empty if S3 fetch fails
+      setAvailableFolders([])
     } finally {
       setLoadingFolders(false)
     }
@@ -238,6 +235,11 @@ const Users: React.FC = () => {
     }
   }
 
+  const openAllFoldersModal = (user: any) => {
+    setSelectedUserFolders(user)
+    setShowAllFoldersModal(true)
+  }
+
   const handleUpdateSshKey = async () => {
     if (!selectedUser || !sshKeyInput.trim()) return
 
@@ -258,6 +260,19 @@ const Users: React.FC = () => {
 
   const getStatusColor = (is_active: boolean) => {
     return is_active ? 'text-green-600 bg-green-100' : 'text-red-600 bg-red-100'
+  }
+
+  const getPermissionBadge = (permission: string) => {
+    switch(permission) {
+      case 'read':
+        return { label: 'R', color: 'bg-blue-100 text-blue-700', title: 'Read Only' }
+      case 'write':
+        return { label: 'RW', color: 'bg-yellow-100 text-yellow-700', title: 'Read & Write' }
+      case 'full':
+        return { label: 'Full', color: 'bg-green-100 text-green-700', title: 'Full Access' }
+      default:
+        return { label: '?', color: 'bg-gray-100 text-gray-700', title: 'Unknown' }
+    }
   }
 
   const filteredUsers = users.filter(user =>
@@ -318,22 +333,25 @@ const Users: React.FC = () => {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       User
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Role
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Home Directory
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Assigned Folders
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Last Login
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
                     </th>
                   </tr>
@@ -341,37 +359,80 @@ const Users: React.FC = () => {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredUsers.map((user) => (
                     <tr key={user.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-4 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="h-10 w-10 bg-primary-600 rounded-full flex items-center justify-center">
+                          <div className="h-10 w-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center shadow-sm">
                             <span className="text-sm font-medium text-white">
                               {user.username.charAt(0).toUpperCase()}
                             </span>
                           </div>
-                          <div className="ml-4">
+                          <div className="ml-3">
                             <div className="text-sm font-medium text-gray-900">
                               {user.username}
                             </div>
-                            <div className="text-sm text-gray-500 flex items-center">
+                            <div className="text-xs text-gray-500 flex items-center">
                               <Mail className="h-3 w-3 mr-1" />
                               {user.email}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-4 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(user.role)}`}>
                           <Shield className="h-3 w-3 mr-1" />
                           {user.role}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <div className="flex items-center">
-                          <Home className="h-3 w-3 mr-1" />
-                          {(user as any).home_directory || `/home/${user.username}`}
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <div className="flex items-center text-sm text-gray-700">
+                          <Home className="h-3 w-3 mr-1 text-gray-400" />
+                          <span className="font-mono text-xs">
+                            {(user as any).home_directory || `/home/${user.username}`}
+                          </span>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-4 py-4">
+                        <div className="max-w-xs">
+                          {(user as any).folder_assignments && (user as any).folder_assignments.length > 0 ? (
+                            <div className="space-y-1">
+                              {(user as any).folder_assignments.slice(0, 2).map((folder: any, idx: number) => {
+                                const badge = getPermissionBadge(folder.permission)
+                                return (
+                                  <div key={idx} className="flex items-center gap-1">
+                                    <Folder className="h-3 w-3 text-gray-400 flex-shrink-0" />
+                                    <span className="font-mono text-xs text-gray-700 truncate max-w-[150px]">
+                                      {folder.folder_path}
+                                    </span>
+                                    <span 
+                                      className={`px-1.5 py-0.5 rounded text-xs font-medium ${badge.color}`}
+                                      title={badge.title}
+                                    >
+                                      {badge.label}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                              {(user as any).folder_assignments.length > 2 && (
+                                <div className="flex items-center gap-1">
+                                  <FolderPlus className="h-3 w-3 text-gray-400" />
+                                  <button
+                                    onClick={() => openAllFoldersModal(user)}
+                                    className="text-xs text-blue-600 hover:text-blue-800 font-medium underline hover:no-underline transition-colors"
+                                  >
+                                    +{(user as any).folder_assignments.length - 2} more folders
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <Folder className="h-3 w-3 text-gray-300" />
+                              <span className="text-xs text-gray-400 italic">No folders assigned</span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(user.is_active)}`}>
                           {user.is_active ? (
                             <UserCheck className="h-3 w-3 mr-1" />
@@ -381,14 +442,14 @@ const Users: React.FC = () => {
                           {user.is_active ? 'Active' : 'Inactive'}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
                         {user.last_login ? (
-                          <div className="flex items-center">
+                          <div className="flex items-center text-xs">
                             <Calendar className="h-3 w-3 mr-1" />
                             {formatDate(user.last_login, 'relative')}
                           </div>
                         ) : (
-                          'Never'
+                          <span className="text-xs text-gray-400">Never</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -952,6 +1013,87 @@ const Users: React.FC = () => {
             </Button>
             <Button onClick={handleUpdateFolders}>
               Update Folder Assignments
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showAllFoldersModal}
+        onClose={() => setShowAllFoldersModal(false)}
+        title={`All Folder Assignments - ${selectedUserFolders?.username}`}
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm text-gray-600 mb-4">
+              Complete list of folder assignments for <strong>{selectedUserFolders?.username}</strong>
+            </p>
+            
+            <div className="bg-gray-50 p-3 rounded-md mb-4">
+              <div className="flex items-center text-sm text-gray-600">
+                <Home className="h-4 w-4 mr-2" />
+                <span>Home Directory: <strong>{selectedUserFolders?.home_directory || `/home/${selectedUserFolders?.username}`}</strong></span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">User automatically has full access to their home directory</p>
+            </div>
+
+            {selectedUserFolders?.folder_assignments && selectedUserFolders.folder_assignments.length > 0 ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-gray-700 flex items-center">
+                    <Folder className="h-4 w-4 mr-2" />
+                    Additional Folder Access ({selectedUserFolders.folder_assignments.length})
+                  </h4>
+                </div>
+                
+                <div className="grid gap-3">
+                  {selectedUserFolders.folder_assignments.map((folder: any, index: number) => {
+                    const badge = getPermissionBadge(folder.permission)
+                    return (
+                      <div key={index} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-sm transition-shadow">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 flex-1">
+                            <div className="flex-shrink-0">
+                              <Folder className="h-5 w-5 text-gray-400" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-mono text-sm text-gray-900 truncate">
+                                {folder.folder_path}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {folder.permission === 'read' ? 'View and download files' : 
+                                 folder.permission === 'write' ? 'View, download, upload, and modify files' : 
+                                 'Complete control including delete operations'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex-shrink-0">
+                            <span 
+                              className={`px-2.5 py-1 rounded-full text-xs font-semibold ${badge.color}`}
+                              title={badge.title}
+                            >
+                              {badge.label}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Folder className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-sm text-gray-500">No additional folder assignments</p>
+                <p className="text-xs text-gray-400 mt-1">This user only has access to their home directory</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" onClick={() => setShowAllFoldersModal(false)}>
+              Close
             </Button>
           </div>
         </div>

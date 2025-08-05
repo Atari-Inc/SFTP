@@ -33,52 +33,22 @@ async def list_s3_folders(
         
         folders = []
         
-        # Get top-level folders (common prefixes)
+        # Get only top-level folders (root level)
         if 'CommonPrefixes' in response:
             for prefix in response['CommonPrefixes']:
                 folder_name = prefix['Prefix'].rstrip('/')
                 folders.append({
                     'path': f'/{folder_name}',
-                    'name': folder_name.replace('/', ' > '),
+                    'name': folder_name,
                     'type': 'folder',
                     'level': 1
                 })
         
-        # Get subfolders for each top-level folder
-        for folder in folders.copy():
-            try:
-                subfolder_response = s3_client.list_objects_v2(
-                    Bucket=settings.AWS_S3_BUCKET,
-                    Prefix=folder['path'].lstrip('/') + '/',
-                    Delimiter='/'
-                )
-                
-                if 'CommonPrefixes' in subfolder_response:
-                    for subprefix in subfolder_response['CommonPrefixes']:
-                        subfolder_path = subprefix['Prefix'].rstrip('/')
-                        folders.append({
-                            'path': f'/{subfolder_path}',
-                            'name': subfolder_path.replace('/', ' > '),
-                            'type': 'subfolder',
-                            'level': 2
-                        })
-            except Exception as e:
-                logger.warning(f"Could not fetch subfolders for {folder['path']}: {e}")
-                continue
-        
         # Sort folders by path
         folders.sort(key=lambda x: x['path'])
         
-        # Add some common system folders that might not exist yet
-        system_folders = [
-            {'path': '/home', 'name': 'home', 'type': 'system', 'level': 0},
-            {'path': '/shared', 'name': 'shared', 'type': 'system', 'level': 0},
-            {'path': '/uploads', 'name': 'uploads', 'type': 'system', 'level': 0},
-            {'path': '/downloads', 'name': 'downloads', 'type': 'system', 'level': 0},
-        ]
-        
-        # Combine system folders with S3 folders
-        all_folders = system_folders + folders
+        # Only return actual S3 folders, no system folders
+        all_folders = folders
         
         logger.info(f"Found {len(all_folders)} folders for admin {current_user.username}")
         

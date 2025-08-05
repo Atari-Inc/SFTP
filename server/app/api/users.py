@@ -40,6 +40,13 @@ async def list_users(
     offset = (page - 1) * limit
     users = query.offset(offset).limit(limit).all()
     
+    # Load folder assignments for each user
+    for user in users:
+        user.folder_assignments = db.query(UserFolder).filter(
+            UserFolder.user_id == user.id,
+            UserFolder.is_active == True
+        ).all()
+    
     return {
         "data": [UserResponse.from_orm(user) for user in users],
         "pagination": {
