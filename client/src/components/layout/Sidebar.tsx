@@ -9,13 +9,15 @@ import {
   LogOut,
   Server,
   User,
-  BarChart3
+  BarChart3,
+  Terminal
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: Home },
   { name: 'File Manager', href: '/files', icon: FolderOpen },
+  { name: 'SFTP Server', href: '/sftp', icon: Terminal, requiresSftp: true },
   { name: 'Users', href: '/users', icon: Users, adminOnly: true },
   { name: 'Activity Logs', href: '/activity', icon: Activity },
   { name: 'Analytics', href: '/analytics', icon: BarChart3, adminOnly: true },
@@ -26,9 +28,19 @@ const Sidebar: React.FC = () => {
   const { user, logout } = useAuth()
   const location = useLocation()
 
-  const filteredNavigation = navigation.filter(item => 
-    !item.adminOnly || user?.role === 'admin'
-  )
+  const filteredNavigation = navigation.filter(item => {
+    // Check admin-only items
+    if (item.adminOnly && user?.role !== 'admin') {
+      return false
+    }
+    
+    // Check SFTP requirement - show for admin or users with SFTP enabled
+    if (item.requiresSftp) {
+      return user?.role === 'admin' || user?.sftp_enabled
+    }
+    
+    return true
+  })
 
   return (
     <div className="flex flex-col w-64 bg-white border-r border-gray-200 h-full">

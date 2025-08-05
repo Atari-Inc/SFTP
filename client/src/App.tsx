@@ -6,6 +6,7 @@ import Login from '@/components/auth/Login'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import Dashboard from '@/pages/Dashboard'
 import FileManager from '@/pages/FileManager'
+import SftpServer from '@/pages/SftpServer'
 import Users from '@/pages/Users'
 import ActivityLogs from '@/pages/ActivityLogs'
 import Profile from '@/pages/Profile'
@@ -37,6 +38,7 @@ const App: React.FC = () => {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="files" element={<FileManager />} />
+        <Route path="sftp" element={<SftpServer />} />
         <Route path="users" element={
           <ProtectedRoute requiredRole="admin">
             <Users />
