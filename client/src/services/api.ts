@@ -149,6 +149,12 @@ export const userAPI = {
   getUserFolders: (userId: string) => apiClient.get(`/users/${userId}/folders`),
 }
 
+export const foldersAPI = {
+  listS3Folders: () => apiClient.get('/folders'),
+  
+  getBucketInfo: () => apiClient.get('/folders/bucket-info'),
+}
+
 export const activityAPI = {
   getLogs: (params?: { 
     page?: number

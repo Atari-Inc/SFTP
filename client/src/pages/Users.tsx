@@ -16,7 +16,7 @@ import {
   Home,
   Settings
 } from 'lucide-react'
-import { userAPI } from '@/services/api'
+import { userAPI, foldersAPI } from '@/services/api'
 import { User } from '@/types'
 import { formatDate } from '@/utils'
 import Button from '@/components/ui/Button'
@@ -58,6 +58,9 @@ const Users: React.FC = () => {
   const [sshKeyInput, setSshKeyInput] = useState('')
   const [userFolders, setUserFolders] = useState<FolderAssignment[]>([])
   const [newFolders, setNewFolders] = useState<FolderAssignment[]>([{ folder_path: '', permission: 'read' }])
+  const [currentUsername, setCurrentUsername] = useState('')
+  const [availableFolders, setAvailableFolders] = useState<Array<{path: string, name: string, type: string}>>([])
+  const [loadingFolders, setLoadingFolders] = useState(false)
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
@@ -81,7 +84,27 @@ const Users: React.FC = () => {
 
   useEffect(() => {
     loadUsers()
+    loadAvailableFolders()
   }, [pagination.page, searchQuery])
+
+  const loadAvailableFolders = async () => {
+    setLoadingFolders(true)
+    try {
+      const response = await foldersAPI.listS3Folders()
+      setAvailableFolders(response.data)
+    } catch (error) {
+      console.error('Failed to load folders:', error)
+      // Fallback to default folders if S3 fetch fails
+      setAvailableFolders([
+        { path: '/shared/documents', name: 'Shared Documents', type: 'default' },
+        { path: '/shared/uploads', name: 'Shared Uploads', type: 'default' },
+        { path: '/projects/common', name: 'Common Projects', type: 'default' },
+        { path: '/backup/shared', name: 'Shared Backup', type: 'default' },
+      ])
+    } finally {
+      setLoadingFolders(false)
+    }
+  }
 
   const loadUsers = async () => {
     setLoading(true)
@@ -249,7 +272,12 @@ const Users: React.FC = () => {
           <h1 className="text-3xl font-bold text-gray-900">Users</h1>
           <p className="mt-2 text-gray-600">Manage system users and their permissions</p>
         </div>
-        <Button onClick={() => setShowCreateModal(true)}>
+        <Button onClick={() => {
+          setShowCreateModal(true)
+          setCurrentUsername('')
+          setNewFolders([{ folder_path: '', permission: 'read' }])
+          reset()
+        }}>
           <Plus className="h-4 w-4 mr-2" />
           Add User
         </Button>
@@ -445,9 +473,13 @@ const Users: React.FC = () => {
               {...register('username', {
                 required: 'Username is required',
                 minLength: { value: 3, message: 'Username must be at least 3 characters' },
+                onChange: (e) => setCurrentUsername(e.target.value)
               })}
               className="mt-1 input-field"
               placeholder="Enter username"
+              onChange={(e) => {
+                setCurrentUsername(e.target.value)
+              }}
             />
             {errors.username && (
               <p className="mt-1 text-sm text-red-600">{errors.username.message}</p>
@@ -455,19 +487,41 @@ const Users: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Email</label>
-            <input
-              {...register('email', {
-                required: 'Email is required',
-                pattern: {
-                  value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                  message: 'Invalid email address',
-                },
-              })}
-              type="email"
-              className="mt-1 input-field"
-              placeholder="Enter email"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
+            <div className="relative">
+              <input
+                {...register('email', {
+                  required: 'Email is required',
+                  pattern: {
+                    value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                    message: 'Invalid email address',
+                  },
+                })}
+                type="email"
+                className="input-field pr-10"
+                placeholder={currentUsername ? `${currentUsername}@company.com` : 'Enter email address'}
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                <Mail className="h-4 w-4 text-gray-400" />
+              </div>
+            </div>
+            {currentUsername && (
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  className="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-md border border-blue-200 transition-colors"
+                  onClick={() => {
+                    const emailField = document.querySelector('input[type="email"]') as HTMLInputElement
+                    if (emailField) {
+                      emailField.value = `${currentUsername}@company.com`
+                      emailField.dispatchEvent(new Event('input', { bubbles: true }))
+                    }
+                  }}
+                >
+                  📧 Use {currentUsername}@company.com
+                </button>
+              </div>
+            )}
             {errors.email && (
               <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
             )}
@@ -502,15 +556,43 @@ const Users: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Home Directory</label>
-            <input
-              {...register('home_directory')}
-              className="mt-1 input-field"
-              placeholder={`/home/username (auto-generated if empty)`}
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              User's home directory path. Will default to /home/username if not specified.
-            </p>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Home Directory</label>
+            <div className="relative">
+              <select
+                {...register('home_directory')}
+                className="input-field pr-10"
+                disabled={loadingFolders}
+              >
+                <option value="">Select home directory...</option>
+                <option value={`/home/${currentUsername || 'username'}`}>
+                  🏠 /home/{currentUsername || 'username'} (Default)
+                </option>
+                {availableFolders.map((folder) => (
+                  <option key={folder.path} value={folder.path}>
+                    📁 {folder.name} ({folder.path})
+                  </option>
+                ))}
+              </select>
+              <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                <Home className="h-4 w-4 text-gray-400" />
+              </div>
+            </div>
+            <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  <Home className="h-4 w-4 text-blue-600 mt-0.5" />
+                </div>
+                <div className="ml-2 text-sm text-blue-800">
+                  <p className="font-medium">Home Directory Selection</p>
+                  <p className="mt-1">
+                    {loadingFolders 
+                      ? 'Loading directories from S3...' 
+                      : `Choose from your S3 root folders or use the default /home/${currentUsername || 'username'} directory.`
+                    }
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div>
@@ -526,56 +608,112 @@ const Users: React.FC = () => {
             </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Folder Assignments</label>
-            <div className="mt-2 space-y-2">
+          <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+            <div className="flex items-center justify-between mb-4">
+              <label className="block text-sm font-medium text-gray-700">
+                <Folder className="h-4 w-4 inline mr-2" />
+                Additional Folder Access
+              </label>
+              <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
+                {loadingFolders ? 'Loading...' : `${availableFolders.length} folders available`}
+              </span>
+            </div>
+            
+            <div className="space-y-3">
               {newFolders.map((folder, index) => (
-                <div key={index} className="flex space-x-2">
-                  <input
-                    value={folder.folder_path}
-                    onChange={(e) => updateFolderRow(index, 'folder_path', e.target.value)}
-                    className="flex-1 input-field"
-                    placeholder="/path/to/folder"
-                  />
-                  <select
-                    value={folder.permission}
-                    onChange={(e) => updateFolderRow(index, 'permission', e.target.value)}
-                    className="input-field w-24"
-                  >
-                    <option value="read">Read</option>
-                    <option value="write">Write</option>
-                    <option value="full">Full</option>
-                  </select>
-                  {newFolders.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeFolderRow(index)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                <div key={index} className="bg-white border border-gray-200 rounded-md p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-gray-600">
+                      Folder Assignment #{index + 1}
+                    </span>
+                    {newFolders.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeFolderRow(index)}
+                        className="text-red-600 hover:text-red-800 border-red-200 hover:border-red-300"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Folder Path</label>
+                      <select
+                        value={folder.folder_path}
+                        onChange={(e) => updateFolderRow(index, 'folder_path', e.target.value)}
+                        className="w-full input-field text-sm"
+                        disabled={loadingFolders}
+                      >
+                        <option value="">Select folder...</option>
+                        {availableFolders.map((availableFolder) => (
+                          <option key={availableFolder.path} value={availableFolder.path}>
+                            📁 {availableFolder.name} ({availableFolder.path})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Permission</label>
+                      <select
+                        value={folder.permission}
+                        onChange={(e) => updateFolderRow(index, 'permission', e.target.value)}
+                        className="w-full input-field text-sm"
+                      >
+                        <option value="read">🔍 Read Only</option>
+                        <option value="write">✏️ Read & Write</option>
+                        <option value="full">🔓 Full Access</option>
+                      </select>
+                    </div>
+                  </div>
+                  
+                  {folder.folder_path && (
+                    <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                      <strong>Access:</strong> {folder.permission === 'read' ? 'View and download files' : folder.permission === 'write' ? 'View, download, upload, and modify files' : 'Complete control including delete operations'}
+                    </div>
                   )}
                 </div>
               ))}
+              
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={addFolderRow}
-                className="w-full"
+                className="w-full border-dashed border-2 hover:border-blue-300 hover:bg-blue-50"
+                disabled={loadingFolders}
               >
-                <FolderPlus className="h-3 w-3 mr-2" />
-                Add Folder
+                <FolderPlus className="h-4 w-4 mr-2" />
+                {loadingFolders ? 'Loading folders...' : 'Add Another Folder Assignment'}
               </Button>
             </div>
-            <p className="mt-1 text-xs text-gray-500">
-              Additional folders this user can access beyond their home directory.
-            </p>
+            
+            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-md">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  <Settings className="h-4 w-4 text-green-600 mt-0.5" />
+                </div>
+                <div className="ml-2 text-sm text-green-800">
+                  <p className="font-medium">Folder Access Management</p>
+                  <p className="mt-1">
+                    Grant users access to specific S3 folders beyond their home directory. Each folder can have different permission levels for granular access control.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="flex justify-end space-x-2">
-            <Button type="button" variant="outline" onClick={() => setShowCreateModal(false)}>
+            <Button type="button" variant="outline" onClick={() => {
+              setShowCreateModal(false)
+              setCurrentUsername('')
+              setNewFolders([{ folder_path: '', permission: 'read' }])
+              reset()
+            }}>
               Cancel
             </Button>
             <Button type="submit" loading={isSubmitting}>
@@ -716,50 +854,95 @@ const Users: React.FC = () => {
               <p className="text-xs text-gray-500 mt-1">User automatically has full access to their home directory</p>
             </div>
 
-            <label className="block text-sm font-medium text-gray-700 mb-2">Additional Folder Access</label>
-            <div className="space-y-2">
-              {newFolders.map((folder, index) => (
-                <div key={index} className="flex space-x-2">
-                  <input
-                    value={folder.folder_path}
-                    onChange={(e) => updateFolderRow(index, 'folder_path', e.target.value)}
-                    className="flex-1 input-field"
-                    placeholder="/path/to/folder"
-                  />
-                  <select
-                    value={folder.permission}
-                    onChange={(e) => updateFolderRow(index, 'permission', e.target.value)}
-                    className="input-field w-32"
-                  >
-                    <option value="read">Read Only</option>
-                    <option value="write">Read & Write</option>
-                    <option value="full">Full Access</option>
-                  </select>
-                  {newFolders.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeFolderRow(index)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  )}
-                </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addFolderRow}
-                className="w-full"
-              >
-                <FolderPlus className="h-3 w-3 mr-2" />
-                Add Another Folder
-              </Button>
+            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+              <div className="flex items-center justify-between mb-4">
+                <label className="block text-sm font-medium text-gray-700">
+                  <Folder className="h-4 w-4 inline mr-2" />
+                  Additional Folder Access
+                </label>
+                <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
+                  {loadingFolders ? 'Loading...' : `${availableFolders.length} folders available`}
+                </span>
+              </div>
+              
+              <div className="space-y-3">
+                {newFolders.map((folder, index) => (
+                  <div key={index} className="bg-white border border-gray-200 rounded-md p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium text-gray-600">
+                        Folder Assignment #{index + 1}
+                      </span>
+                      {newFolders.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => removeFolderRow(index)}
+                          className="text-red-600 hover:text-red-800 border-red-200 hover:border-red-300"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Folder Path</label>
+                        <select
+                          value={folder.folder_path}
+                          onChange={(e) => updateFolderRow(index, 'folder_path', e.target.value)}
+                          className="w-full input-field text-sm"
+                          disabled={loadingFolders}
+                        >
+                          <option value="">Select folder...</option>
+                          {availableFolders.map((availableFolder) => (
+                            <option key={availableFolder.path} value={availableFolder.path}>
+                              📁 {availableFolder.name} ({availableFolder.path})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Permission</label>
+                        <select
+                          value={folder.permission}
+                          onChange={(e) => updateFolderRow(index, 'permission', e.target.value)}
+                          className="w-full input-field text-sm"
+                        >
+                          <option value="read">🔍 Read Only</option>
+                          <option value="write">✏️ Read & Write</option>
+                          <option value="full">🔓 Full Access</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    {folder.folder_path && (
+                      <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                        <strong>Access:</strong> {folder.permission === 'read' ? 'View and download files' : folder.permission === 'write' ? 'View, download, upload, and modify files' : 'Complete control including delete operations'}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addFolderRow}
+                  className="w-full border-dashed border-2 hover:border-blue-300 hover:bg-blue-50"
+                  disabled={loadingFolders}
+                >
+                  <FolderPlus className="h-4 w-4 mr-2" />
+                  {loadingFolders ? 'Loading folders...' : 'Add Another Folder Assignment'}
+                </Button>
+              </div>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              Specify additional folders this user can access. Each folder can have different permission levels.
+              {loadingFolders 
+                ? 'Loading folders from S3 bucket...' 
+                : `Specify additional folders this user can access. ${availableFolders.length} folders available from your S3 bucket.`
+              }
             </p>
           </div>
 

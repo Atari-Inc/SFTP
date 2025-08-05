@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     
     # AWS Transfer Family Configuration
     AWS_TRANSFER_SERVER_ID: str
+    TRANSFER_SERVER_ID: Optional[str] = None
+    IAM_ROLE_ARN: Optional[str] = None
+    S3_BUCKET_NAME: Optional[str] = None
     
     # SFTP Configuration
     SFTP_HOST: Optional[str] = None
