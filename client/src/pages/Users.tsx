@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { 
   Plus, 
   Search, 
@@ -18,7 +18,11 @@ import {
   Filter,
   Download,
   FileText,
-  RefreshCw
+  RefreshCw,
+  Eye,
+  Power,
+  Copy,
+  CheckCircle
 } from 'lucide-react'
 import { userAPI, foldersAPI } from '@/services/api'
 import { User } from '@/types'
@@ -60,8 +64,16 @@ const Users: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false)
   const [showSshKeyModal, setShowSshKeyModal] = useState(false)
   const [showFoldersModal, setShowFoldersModal] = useState(false)
+  const [showDetailsModal, setShowDetailsModal] = useState(false)
+  const [showBulkActions, setShowBulkActions] = useState(false)
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
   const [sshKeyInput, setSshKeyInput] = useState('')
+  const [regeneratedSshKeys, setRegeneratedSshKeys] = useState<{publicKey: string, privateKey: string} | null>(null)
+  const [regeneratingKeys, setRegeneratingKeys] = useState(false)
+  const [sftpPassword, setSftpPassword] = useState('')
+  const [showPasswordReset, setShowPasswordReset] = useState(false)
   const [userFolders, setUserFolders] = useState<FolderAssignment[]>([])
   const [newFolders, setNewFolders] = useState<FolderAssignment[]>([{ folder_path: '', permission: 'read' }])
   const [currentUsername, setCurrentUsername] = useState('')
@@ -197,7 +209,7 @@ const Users: React.FC = () => {
     }
   }
 
-  const loadUsers = async () => {
+  const loadUsers = async (retryCount = 0) => {
     setLoading(true)
     try {
       // Combine searchQuery and filters.search
@@ -248,9 +260,20 @@ const Users: React.FC = () => {
         total: response.data.pagination.total, // Keep original total for now
         totalPages: response.data.pagination.totalPages,
       }))
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load users:', error)
-      toast.error('Failed to load users')
+      
+      if (error.code === 'ECONNABORTED' && retryCount < 2) {
+        toast.error(`Request timed out. Retrying... (${retryCount + 1}/2)`)
+        setTimeout(() => loadUsers(retryCount + 1), 1000)
+        return
+      }
+      
+      if (error.code === 'ECONNABORTED') {
+        toast.error('Unable to load users - server is taking too long to respond. Please try again later or contact support.')
+      } else {
+        toast.error('Failed to load users')
+      }
     } finally {
       setLoading(false)
     }
@@ -300,7 +323,7 @@ const Users: React.FC = () => {
   }
 
   const handleDeleteUser = async (userId: string, username: string) => {
-    if (confirm(`Are you sure you want to delete user "${username}"?`)) {
+    if (confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
       try {
         await userAPI.deleteUser(userId)
         toast.success('User deleted successfully')
@@ -308,6 +331,60 @@ const Users: React.FC = () => {
       } catch (error: any) {
         toast.error(error.response?.data?.message || 'Failed to delete user')
       }
+    }
+  }
+
+  const handleToggleStatus = async (user: User) => {
+    const newStatus = !user.is_active
+    const action = newStatus ? 'activate' : 'deactivate'
+    
+    if (confirm(`Are you sure you want to ${action} user "${user.username}"?`)) {
+      try {
+        await userAPI.toggleUserStatus(user.id, newStatus)
+        toast.success(`User ${action}d successfully`)
+        loadUsers()
+      } catch (error: any) {
+        toast.error(error.response?.data?.message || `Failed to ${action} user`)
+      }
+    }
+  }
+
+  const handleViewDetails = (user: User) => {
+    setSelectedUser(user)
+    setShowDetailsModal(true)
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedUsers.length === 0) {
+      toast.error('No users selected')
+      return
+    }
+    
+    if (confirm(`Are you sure you want to delete ${selectedUsers.length} users? This action cannot be undone.`)) {
+      try {
+        await Promise.all(selectedUsers.map(userId => userAPI.deleteUser(userId)))
+        toast.success(`${selectedUsers.length} users deleted successfully`)
+        setSelectedUsers([])
+        loadUsers()
+      } catch (error: any) {
+        toast.error('Failed to delete some users')
+      }
+    }
+  }
+
+  const handleSelectAll = () => {
+    if (selectedUsers.length === users.length) {
+      setSelectedUsers([])
+    } else {
+      setSelectedUsers(users.map(u => u.id))
+    }
+  }
+
+  const handleSelectUser = (userId: string) => {
+    if (selectedUsers.includes(userId)) {
+      setSelectedUsers(selectedUsers.filter(id => id !== userId))
+    } else {
+      setSelectedUsers([...selectedUsers, userId])
     }
   }
 
@@ -324,6 +401,9 @@ const Users: React.FC = () => {
   const openSshKeyModal = (user: User) => {
     setSelectedUser(user)
     setSshKeyInput('')
+    setRegeneratedSshKeys(null)
+    setSftpPassword('')
+    setShowPasswordReset(false)
     setShowSshKeyModal(true)
   }
 
@@ -378,16 +458,56 @@ const Users: React.FC = () => {
   }
 
   const handleUpdateSshKey = async () => {
-    if (!selectedUser || !sshKeyInput.trim()) return
+    if (!selectedUser) return
+    
+    const keyToUpdate = regeneratedSshKeys?.publicKey || sshKeyInput.trim()
+    if (!keyToUpdate) {
+      toast.error('Please provide an SSH key or generate a new one')
+      return
+    }
 
     try {
-      await userAPI.updateSftpSshKey(selectedUser.id, sshKeyInput.trim())
+      await userAPI.updateSftpSshKey(selectedUser.id, keyToUpdate)
       toast.success('SSH key updated successfully')
       setShowSshKeyModal(false)
       setSshKeyInput('')
+      setRegeneratedSshKeys(null)
       setSelectedUser(null)
+      loadUsers()
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to update SSH key')
+    }
+  }
+
+  const regenerateSshKeys = async () => {
+    if (!selectedUser) return
+    
+    setRegeneratingKeys(true)
+    try {
+      const response = await userAPI.generateSshKey({ username: selectedUser.username })
+      setRegeneratedSshKeys({
+        publicKey: response.data.public_key,
+        privateKey: response.data.private_key
+      })
+      toast.success('SSH keys regenerated successfully!')
+    } catch (error) {
+      toast.error('Failed to regenerate SSH keys')
+      console.error('Key regeneration error:', error)
+    } finally {
+      setRegeneratingKeys(false)
+    }
+  }
+
+  const handleResetSftpPassword = async () => {
+    if (!selectedUser || !sftpPassword.trim()) return
+    
+    try {
+      await userAPI.resetSftpPassword(selectedUser.id, sftpPassword)
+      toast.success('SFTP password reset successfully')
+      setSftpPassword('')
+      setShowPasswordReset(false)
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to reset SFTP password')
     }
   }
 
@@ -447,6 +567,18 @@ const Users: React.FC = () => {
     user.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
     user.email.toLowerCase().includes(searchQuery.toLowerCase())
   )
+  
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setActiveDropdown(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   return (
     <div className="space-y-6">
@@ -582,6 +714,46 @@ const Users: React.FC = () => {
         </div>
       )}
 
+      {selectedUsers.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center">
+            <CheckCircle className="h-5 w-5 text-blue-600 mr-3" />
+            <span className="text-sm font-medium text-blue-900">
+              {selectedUsers.length} user{selectedUsers.length > 1 ? 's' : ''} selected
+            </span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Button
+              onClick={() => {
+                const selectedUsersList = users.filter(u => selectedUsers.includes(u.id))
+                selectedUsersList.forEach(user => handleToggleStatus(user))
+                setSelectedUsers([])
+              }}
+              variant="outline"
+              size="sm"
+            >
+              <Power className="h-4 w-4 mr-2" />
+              Toggle Status
+            </Button>
+            <Button
+              onClick={handleBulkDelete}
+              variant="danger"
+              size="sm"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Selected
+            </Button>
+            <Button
+              onClick={() => setSelectedUsers([])}
+              variant="outline"
+              size="sm"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -617,6 +789,14 @@ const Users: React.FC = () => {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedUsers.length === users.length && users.length > 0}
+                        onChange={handleSelectAll}
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      />
+                    </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       User
                     </th>
@@ -643,6 +823,14 @@ const Users: React.FC = () => {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredUsers.map((user) => (
                     <tr key={user.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedUsers.includes(user.id)}
+                          onChange={() => handleSelectUser(user.id)}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        />
+                      </td>
                       <td className="px-4 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className="h-10 w-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center shadow-sm">
@@ -737,39 +925,103 @@ const Users: React.FC = () => {
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex items-center justify-end space-x-2">
+                        <div className="relative inline-block text-left" ref={dropdownRef}>
                           <Button
-                            onClick={() => openFoldersModal(user)}
+                            onClick={() => setActiveDropdown(activeDropdown === user.id ? null : user.id)}
                             variant="outline"
                             size="sm"
-                            title="Manage Folders"
+                            className="inline-flex items-center"
                           >
-                            <Folder className="h-3 w-3" />
+                            <MoreVertical className="h-4 w-4" />
                           </Button>
-                          <Button
-                            onClick={() => openSshKeyModal(user)}
-                            variant="outline"
-                            size="sm"
-                            title="Manage SSH Key"
-                          >
-                            <Key className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            onClick={() => openEditModal(user)}
-                            variant="outline"
-                            size="sm"
-                            title="Edit User"
-                          >
-                            <Edit className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            onClick={() => handleDeleteUser(user.id, user.username)}
-                            variant="danger"
-                            size="sm"
-                            title="Delete User"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
+                          
+                          {activeDropdown === user.id && (
+                            <div className="origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
+                              <div className="py-1" role="menu">
+                                <button
+                                  onClick={() => {
+                                    handleViewDetails(user)
+                                    setActiveDropdown(null)
+                                  }}
+                                  className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                                >
+                                  <Eye className="h-4 w-4 mr-3" />
+                                  View Details
+                                </button>
+                                
+                                <button
+                                  onClick={() => {
+                                    openEditModal(user)
+                                    setActiveDropdown(null)
+                                  }}
+                                  className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                                >
+                                  <Edit className="h-4 w-4 mr-3" />
+                                  Edit User
+                                </button>
+                                
+                                <button
+                                  onClick={() => {
+                                    openFoldersModal(user)
+                                    setActiveDropdown(null)
+                                  }}
+                                  className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                                >
+                                  <Folder className="h-4 w-4 mr-3" />
+                                  Manage Folders
+                                </button>
+                                
+                                <button
+                                  onClick={() => {
+                                    openSshKeyModal(user)
+                                    setActiveDropdown(null)
+                                  }}
+                                  className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                                >
+                                  <Key className="h-4 w-4 mr-3" />
+                                  Manage SSH Key
+                                </button>
+                                
+                                <div className="border-t border-gray-100"></div>
+                                
+                                <button
+                                  onClick={() => {
+                                    handleToggleStatus(user)
+                                    setActiveDropdown(null)
+                                  }}
+                                  className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                                >
+                                  <Power className="h-4 w-4 mr-3" />
+                                  {user.is_active ? 'Deactivate' : 'Activate'} User
+                                </button>
+                                
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(user.id)
+                                    toast.success('User ID copied to clipboard')
+                                    setActiveDropdown(null)
+                                  }}
+                                  className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                                >
+                                  <Copy className="h-4 w-4 mr-3" />
+                                  Copy User ID
+                                </button>
+                                
+                                <div className="border-t border-gray-100"></div>
+                                
+                                <button
+                                  onClick={() => {
+                                    handleDeleteUser(user.id, user.username)
+                                    setActiveDropdown(null)
+                                  }}
+                                  className="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50 w-full text-left"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-3" />
+                                  Delete User
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1284,37 +1536,237 @@ const Users: React.FC = () => {
 
       <Modal
         isOpen={showSshKeyModal}
-        onClose={() => setShowSshKeyModal(false)}
-        title="Manage SSH Key"
+        onClose={() => {
+          setShowSshKeyModal(false)
+          setRegeneratedSshKeys(null)
+          setSshKeyInput('')
+        }}
+        title="Manage SSH Key & SFTP Access"
+        size="lg"
       >
-        <div className="space-y-4">
+        <div className="space-y-6">
           <div>
             <p className="text-sm text-gray-600 mb-4">
-              Update the SSH public key for <strong>{selectedUser?.username}</strong> in AWS Transfer Family SFTP.
+              Manage SSH authentication for <strong>{selectedUser?.username}</strong>. You can either regenerate SSH keys for password-based authentication or manually update the SSH public key.
             </p>
-            
-            <label className="block text-sm font-medium text-gray-700">SSH Public Key</label>
-            <textarea
-              value={sshKeyInput}
-              onChange={(e) => setSshKeyInput(e.target.value)}
-              className="mt-1 input-field"
-              rows={4}
-              placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAA... user@hostname"
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              Paste the complete SSH public key. This will be configured for SFTP access in AWS Transfer Family.
-            </p>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex items-start">
+                <Key className="h-5 w-5 text-blue-600 mt-0.5 mr-3" />
+                <div className="text-sm text-blue-800">
+                  <p className="font-medium mb-1">SSH Key Management Options</p>
+                  <ul className="list-disc list-inside space-y-1 text-xs">
+                    <li>Regenerate SSH keys to enable password-based SFTP authentication</li>
+                    <li>Reset SFTP password for existing users</li>
+                    <li>Or manually paste an existing SSH public key</li>
+                    <li>All changes will be synced with AWS Transfer Family</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            {!regeneratedSshKeys ? (
+              <div className="space-y-4">
+                <div>
+                  <Button
+                    onClick={regenerateSshKeys}
+                    loading={regeneratingKeys}
+                    disabled={regeneratingKeys}
+                    className="w-full"
+                  >
+                    {regeneratingKeys ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Regenerating SSH Keys...
+                      </>
+                    ) : (
+                      <>
+                        <Key className="h-4 w-4 mr-2" />
+                        Regenerate SSH Keys (Enable Password Auth)
+                      </>
+                    )}
+                  </Button>
+                  <p className="mt-2 text-xs text-gray-500 text-center">
+                    This will generate new SSH keys and enable password-based authentication
+                  </p>
+                </div>
+
+                {!showPasswordReset && (
+                  <div>
+                    <Button
+                      onClick={() => setShowPasswordReset(true)}
+                      variant="outline"
+                      className="w-full"
+                    >
+                      <Power className="h-4 w-4 mr-2" />
+                      Reset SFTP Password
+                    </Button>
+                    <p className="mt-2 text-xs text-gray-500 text-center">
+                      Reset the SFTP password for existing user authentication
+                    </p>
+                  </div>
+                )}
+
+                {showPasswordReset && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          New SFTP Password
+                        </label>
+                        <input
+                          type="password"
+                          value={sftpPassword}
+                          onChange={(e) => setSftpPassword(e.target.value)}
+                          className="input-field"
+                          placeholder="Enter new SFTP password"
+                          minLength={6}
+                        />
+                        <p className="mt-1 text-xs text-gray-500">
+                          Password must be at least 6 characters long
+                        </p>
+                      </div>
+                      <div className="flex space-x-2">
+                        <Button
+                          onClick={handleResetSftpPassword}
+                          disabled={!sftpPassword || sftpPassword.length < 6}
+                          size="sm"
+                        >
+                          Reset Password
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setShowPasswordReset(false)
+                            setSftpPassword('')
+                          }}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-300"></div>
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="px-2 bg-white text-gray-500">OR</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Manually Update SSH Public Key
+                  </label>
+                  <textarea
+                    value={sshKeyInput}
+                    onChange={(e) => setSshKeyInput(e.target.value)}
+                    className="input-field"
+                    rows={4}
+                    placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAA... user@hostname"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Paste your existing SSH public key here
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center mb-3">
+                    <CheckCircle className="h-5 w-5 text-green-600 mr-2" />
+                    <span className="font-medium text-green-900">SSH Keys Successfully Regenerated!</span>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-700">Public Key (Will be saved to AWS Transfer Family)</label>
+                      <textarea
+                        value={regeneratedSshKeys.publicKey}
+                        readOnly
+                        className="mt-1 input-field bg-gray-50 text-xs font-mono"
+                        rows={3}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium text-gray-700">Private Key (Download and save securely)</label>
+                      <div className="relative">
+                        <textarea
+                          value={regeneratedSshKeys.privateKey}
+                          readOnly
+                          className="mt-1 input-field bg-gray-50 text-xs font-mono pr-24"
+                          rows={4}
+                        />
+                        <button
+                          onClick={() => {
+                            const blob = new Blob([regeneratedSshKeys.privateKey], { type: 'text/plain' })
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url
+                            a.download = `${selectedUser?.username}_private_key.pem`
+                            a.click()
+                            toast.success('Private key downloaded!')
+                          }}
+                          className="absolute top-2 right-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                        >
+                          <Download className="h-3 w-3 inline mr-1" />
+                          Download
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
+                      <div className="flex items-start">
+                        <Shield className="h-4 w-4 text-yellow-600 mt-0.5 mr-2" />
+                        <div className="text-xs text-yellow-800">
+                          <p className="font-medium mb-1">Important Security Notice:</p>
+                          <ul className="list-disc list-inside space-y-0.5">
+                            <li>Download and securely store the private key</li>
+                            <li>The private key cannot be retrieved later</li>
+                            <li>User can now login via SFTP using their password</li>
+                            <li>Share the private key with the user through a secure channel</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex justify-end space-x-2">
+                    <Button
+                      onClick={() => setRegeneratedSshKeys(null)}
+                      variant="outline"
+                      size="sm"
+                    >
+                      Regenerate Again
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="flex justify-end space-x-2">
-            <Button type="button" variant="outline" onClick={() => setShowSshKeyModal(false)}>
+          <div className="flex justify-end space-x-2 pt-4 border-t">
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={() => {
+                setShowSshKeyModal(false)
+                setRegeneratedSshKeys(null)
+                setSshKeyInput('')
+              }}
+            >
               Cancel
             </Button>
             <Button 
               onClick={handleUpdateSshKey} 
-              disabled={!sshKeyInput.trim()}
+              disabled={!regeneratedSshKeys?.publicKey && !sshKeyInput.trim()}
             >
-              Update SSH Key
+              {regeneratedSshKeys ? 'Save & Update SSH Key' : 'Update SSH Key'}
             </Button>
           </div>
         </div>
@@ -1522,6 +1974,156 @@ const Users: React.FC = () => {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={showDetailsModal}
+        onClose={() => setShowDetailsModal(false)}
+        title="User Details"
+        size="lg"
+      >
+        {selectedUser && (
+          <div className="space-y-6">
+            <div className="bg-gray-50 rounded-lg p-6">
+              <div className="flex items-center mb-4">
+                <div className="h-16 w-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center shadow-md">
+                  <span className="text-2xl font-bold text-white">
+                    {selectedUser.username.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-xl font-semibold text-gray-900">{selectedUser.username}</h3>
+                  <div className="flex items-center mt-1">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(selectedUser.role)}`}>
+                      <Shield className="h-3 w-3 mr-1" />
+                      {selectedUser.role}
+                    </span>
+                    <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(selectedUser.is_active)}`}>
+                      {selectedUser.is_active ? (
+                        <UserCheck className="h-3 w-3 mr-1" />
+                      ) : (
+                        <UserX className="h-3 w-3 mr-1" />
+                      )}
+                      {selectedUser.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">User ID</label>
+                  <div className="mt-1 flex items-center">
+                    <p className="text-sm text-gray-900 font-mono">{selectedUser.id}</p>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(selectedUser.id)
+                        toast.success('User ID copied!')
+                      }}
+                      className="ml-2 text-gray-400 hover:text-gray-600"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Email</label>
+                  <p className="mt-1 text-sm text-gray-900 flex items-center">
+                    <Mail className="h-4 w-4 mr-2 text-gray-400" />
+                    {selectedUser.email}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Created</label>
+                  <p className="mt-1 text-sm text-gray-900 flex items-center">
+                    <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+                    {formatDate(selectedUser.created_at)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Home Directory</label>
+                  <p className="mt-1 text-sm text-gray-900 flex items-center">
+                    <Home className="h-4 w-4 mr-2 text-gray-400" />
+                    {(selectedUser as any).home_directory || `/home/${selectedUser.username}`}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Last Login</label>
+                  <p className="mt-1 text-sm text-gray-900">
+                    {selectedUser.last_login ? formatDate(selectedUser.last_login, 'relative') : 'Never'}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">SFTP Access</label>
+                  <p className="mt-1 text-sm text-gray-900">
+                    {(selectedUser as any).folder_assignments?.length > 0 ? (
+                      <span className="text-green-600 flex items-center">
+                        <CheckCircle className="h-4 w-4 mr-1" />
+                        Enabled ({(selectedUser as any).folder_assignments.length} folders)
+                      </span>
+                    ) : (
+                      <span className="text-gray-500 flex items-center">
+                        <UserX className="h-4 w-4 mr-1" />
+                        Disabled
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {(selectedUser as any).folder_assignments?.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Folder Assignments</label>
+                <div className="mt-2 space-y-2">
+                  {(selectedUser as any).folder_assignments.map((folder: any, index: number) => (
+                    <div key={index} className="flex items-center justify-between bg-gray-50 p-3 rounded-md">
+                      <div className="flex items-center">
+                        <Folder className="h-4 w-4 text-gray-400 mr-2" />
+                        <span className="text-sm text-gray-900 font-mono">{folder.folder_path}</span>
+                      </div>
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        folder.permission === 'full' ? 'bg-purple-100 text-purple-700' :
+                        folder.permission === 'write' ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {folder.permission}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end space-x-2 pt-4 border-t">
+              <Button
+                onClick={() => {
+                  openEditModal(selectedUser)
+                  setShowDetailsModal(false)
+                }}
+                variant="outline"
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit User
+              </Button>
+              <Button
+                onClick={() => setShowDetailsModal(false)}
+                variant="primary"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

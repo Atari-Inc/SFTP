@@ -9,7 +9,7 @@ class ApiClient {
   constructor() {
     this.client = axios.create({
       baseURL: API_BASE_URL,
-      timeout: 30000,
+      timeout: 60000,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -113,7 +113,7 @@ export const fileAPI = {
 
 export const userAPI = {
   getUsers: (params?: { page?: number; limit?: number; search?: string }) =>
-    apiClient.get('/users', { params }),
+    apiClient.get('/users', { params, timeout: 90000 }),
   
   getUser: (userId: string) => apiClient.get(`/users/${userId}`),
   
@@ -128,8 +128,11 @@ export const userAPI = {
   }) =>
     apiClient.post('/users', userData),
   
-  updateUser: (userId: string, userData: Partial<{ username: string; email: string; role: string; ssh_public_key?: string }>) =>
+  updateUser: (userId: string, userData: Partial<{ username: string; email: string; role: string; ssh_public_key?: string; isActive?: boolean }>) =>
     apiClient.put(`/users/${userId}`, userData),
+  
+  toggleUserStatus: (userId: string, isActive: boolean) =>
+    apiClient.put(`/users/${userId}/status`, { isActive }),
   
   deleteUser: (userId: string) => apiClient.delete(`/users/${userId}`),
   
@@ -140,6 +143,9 @@ export const userAPI = {
   
   updateSftpSshKey: (userId: string, sshKey: string) =>
     apiClient.put(`/users/${userId}/sftp/ssh-key`, { ssh_public_key: sshKey }),
+  
+  resetSftpPassword: (userId: string, newPassword: string) =>
+    apiClient.put(`/users/${userId}/sftp/reset-password`, { password: newPassword }),
   
   listSftpUsers: () => apiClient.get('/users/sftp/list'),
   
