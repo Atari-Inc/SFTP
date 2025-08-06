@@ -29,36 +29,142 @@ async def list_files(
     if not path.startswith("/"):
         path = "/" + path
     
-    # Get files from database
-    files = db.query(File).filter(
-        File.owner_id == current_user.id,
-        File.path == path
-    ).all()
+    # For admin users, list files directly from S3
+    if current_user.role == "admin":
+        # Convert path to S3 prefix
+        prefix = path.lstrip("/")
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        
+        # Get files from S3
+        s3_objects = s3_service.list_files(prefix)
+        
+        file_responses = []
+        processed_paths = set()
+        
+        for obj in s3_objects:
+            key = obj.get('Key', '')
+            size = obj.get('Size', 0)
+            last_modified = obj.get('LastModified')
+            
+            # Skip empty objects or current directory
+            if not key or key == prefix:
+                continue
+                
+            # Get relative path from current directory
+            relative_key = key[len(prefix):] if prefix else key
+            
+            # Handle directory structure - show only direct children
+            if "/" in relative_key:
+                # This is a subdirectory or nested file
+                dir_name = relative_key.split("/")[0]
+                if dir_name in processed_paths:
+                    continue
+                processed_paths.add(dir_name)
+                
+                # Create folder entry
+                file_resp = {
+                    "id": f"folder_{dir_name}_{hash(path + dir_name)}",
+                    "name": dir_name,
+                    "size": 0,
+                    "type": "folder",
+                    "path": f"{path.rstrip('/')}/{dir_name}" if path != "/" else f"/{dir_name}",
+                    "mime_type": None,
+                    "permissions": "755",
+                    "owner": "admin",
+                    "group": "admin",
+                    "created_at": last_modified.isoformat() if last_modified else None,
+                    "modified_at": last_modified.isoformat() if last_modified else None,
+                    "accessed_at": None
+                }
+            else:
+                # This is a file in current directory
+                file_resp = {
+                    "id": f"file_{relative_key}_{hash(key)}",
+                    "name": relative_key,
+                    "size": size,
+                    "type": "file",
+                    "path": f"{path.rstrip('/')}/{relative_key}" if path != "/" else f"/{relative_key}",
+                    "mime_type": _get_mime_type(relative_key),
+                    "permissions": "644",
+                    "owner": "admin",
+                    "group": "admin",
+                    "created_at": last_modified.isoformat() if last_modified else None,
+                    "modified_at": last_modified.isoformat() if last_modified else None,
+                    "accessed_at": None
+                }
+            
+            file_responses.append(file_resp)
+        
+        return {
+            "data": file_responses,
+            "total": len(file_responses),
+            "path": path
+        }
     
-    # Convert to response format
-    file_responses = []
-    for file in files:
-        file_resp = FileResponse(
-            id=file.id,
-            name=file.name,
-            size=file.size,
-            type=file.type,
-            path=file.path,
-            mime_type=file.mime_type,
-            permissions=file.permissions,
-            owner=current_user.username,
-            group=file.group,
-            created_at=file.created_at,
-            modified_at=file.modified_at,
-            accessed_at=file.accessed_at
-        )
-        file_responses.append(file_resp)
-    
-    return {
-        "data": file_responses,
-        "total": len(file_responses),
-        "path": path
-    }
+    else:
+        # For regular users, get files from database based on their permissions
+        # First get user's folder assignments
+        from ..models.user_folder import UserFolder
+        
+        user_folders = db.query(UserFolder).filter(
+            UserFolder.user_id == current_user.id,
+            UserFolder.is_active == True
+        ).all()
+        
+        # Check if user has access to requested path
+        has_access = False
+        if path == f"/home/{current_user.username}" or path.startswith(f"/home/{current_user.username}/"):
+            has_access = True
+        else:
+            for folder in user_folders:
+                if path == folder.folder_path or path.startswith(folder.folder_path + "/"):
+                    has_access = True
+                    break
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this directory"
+            )
+        
+        # Get files from database
+        files = db.query(File).filter(
+            File.owner_id == current_user.id,
+            File.path == path
+        ).all()
+        
+        # Convert to response format
+        file_responses = []
+        for file in files:
+            file_resp = {
+                "id": str(file.id),
+                "name": file.name,
+                "size": file.size,
+                "type": file.type.value,
+                "path": file.path,
+                "mime_type": file.mime_type,
+                "permissions": file.permissions,
+                "owner": current_user.username,
+                "group": file.group,
+                "created_at": file.created_at.isoformat() if file.created_at else None,
+                "modified_at": file.modified_at.isoformat() if file.modified_at else None,
+                "accessed_at": file.accessed_at.isoformat() if file.accessed_at else None
+            }
+            file_responses.append(file_resp)
+        
+        return {
+            "data": file_responses,
+            "total": len(file_responses),
+            "path": path
+        }
+
+
+def _get_mime_type(filename: str) -> Optional[str]:
+    """Get MIME type based on file extension"""
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(filename)
+    return mime_type
 
 @router.post("/upload", response_model=FileResponse)
 async def upload_file(
@@ -79,9 +185,13 @@ async def upload_file(
             detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE}"
         )
     
-    # Generate S3 key
+    # Generate S3 key - use path-based structure for admin visibility
     file_id = uuid4()
-    s3_key = f"{current_user.id}/{file_id}/{file.filename}"
+    # Normalize the path for S3 key
+    s3_path = path.strip("/")
+    if s3_path and not s3_path.endswith("/"):
+        s3_path += "/"
+    s3_key = f"{s3_path}{file.filename}" if s3_path else file.filename
     
     # Upload to S3
     if not s3_service.upload_file(io.BytesIO(content), s3_key, file.content_type):

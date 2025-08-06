@@ -8,8 +8,8 @@ interface FileItem {
   size: number
   type: 'file' | 'folder'
   path: string
-  createdAt: string
-  modifiedAt: string
+  created_at: string
+  modified_at: string
   owner: string
 }
 
@@ -99,6 +99,7 @@ interface FileContextType extends FileState {
   selectFiles: (fileIds: string[]) => void
   clearSelection: () => void
   createFolder: (name: string) => Promise<void>
+  clearCompletedOperations: () => void
 }
 
 const FileContext = createContext<FileContextType | undefined>(undefined)
@@ -120,17 +121,28 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
 
   const loadFiles = async (path: string = state.currentPath) => {
     dispatch({ type: 'SET_LOADING', payload: true })
+    dispatch({ type: 'SET_ERROR', payload: null })
     try {
+      console.log('Loading files from path:', path)
       const response = await fileAPI.listFiles(path)
+      console.log('Files API response:', response.data)
+      
       // Backend returns { data: [...], total: number, path: string }
       const filesData = response.data.data || response.data || []
+      console.log('Processed files data:', filesData)
+      
+      if (!Array.isArray(filesData)) {
+        console.warn('Files data is not an array:', filesData)
+      }
+      
       dispatch({ type: 'SET_FILES', payload: Array.isArray(filesData) ? filesData : [] })
       dispatch({ type: 'SET_CURRENT_PATH', payload: path })
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Failed to load files'
+      console.error('Error loading files:', error)
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to load files'
       dispatch({ type: 'SET_ERROR', payload: errorMessage })
       dispatch({ type: 'SET_FILES', payload: [] }) // Reset to empty array on error
-      toast.error(errorMessage)
+      toast.error(`Error loading files: ${errorMessage}`)
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false })
     }
@@ -178,7 +190,15 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
         }})
         
         toast.success(`${file.name} uploaded successfully`)
-        await loadFiles()
+        
+        // Add small delay for S3 consistency then refresh
+        setTimeout(async () => {
+          await loadFiles()
+          // Clear completed operations after refresh
+          setTimeout(() => {
+            dispatch({ type: 'REMOVE_OPERATION', payload: operationId })
+          }, 2000) // Keep success status visible for 2 seconds
+        }, 1000)
         
       } catch (error: any) {
         const errorMessage = error.response?.data?.message || 'Upload failed'
@@ -272,6 +292,16 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     }
   }
 
+  const clearCompletedOperations = () => {
+    const completedIds = state.operations
+      .filter(op => op.status === 'completed')
+      .map(op => op.id)
+    
+    completedIds.forEach(id => {
+      dispatch({ type: 'REMOVE_OPERATION', payload: id })
+    })
+  }
+
   const contextValue: FileContextType = {
     ...state,
     loadFiles,
@@ -282,6 +312,7 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     selectFiles,
     clearSelection,
     createFolder,
+    clearCompletedOperations,
   }
 
   return (

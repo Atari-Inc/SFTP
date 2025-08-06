@@ -104,8 +104,11 @@ const Users: React.FC = () => {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<UserFormData>()
+
+  const selectedRole = watch('role')
 
   const {
     register: registerEdit,
@@ -283,14 +286,16 @@ const Users: React.FC = () => {
     try {
       const userData = {
         ...data,
-        home_directory: data.home_directory || `/home/${data.username}`,
-        folder_assignments: newFolders.filter(f => f.folder_path.trim()),
+        // Admin users get root access, regular users get home directory
+        home_directory: data.role === 'admin' ? '/' : (data.home_directory || `/home/${data.username}`),
+        // Admin users don't need folder assignments - they have access to all files
+        folder_assignments: data.role === 'admin' ? [] : newFolders.filter(f => f.folder_path.trim()),
         ssh_public_key: generatedSshKeys?.publicKey || data.ssh_public_key,
         enable_sftp: enableSftp,
         private_key: generatedSshKeys?.privateKey // Store private key with user for later access
       }
       await userAPI.createUser(userData)
-      toast.success('User created successfully')
+      toast.success(`${data.role === 'admin' ? 'Admin' : 'User'} created successfully`)
       setShowCreateModal(false)
       reset()
       setNewFolders([{ folder_path: '', permission: 'read' }])
@@ -1152,47 +1157,76 @@ const Users: React.FC = () => {
             {errors.role && (
               <p className="mt-1 text-sm text-red-600">{errors.role.message}</p>
             )}
+            {selectedRole === 'admin' && (
+              <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded-md">
+                <p className="text-xs text-purple-700 flex items-center">
+                  <Shield className="h-3 w-3 mr-1" />
+                  Admin users automatically have access to all files and folders
+                </p>
+              </div>
+            )}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Home Directory</label>
-            <div className="relative">
-              <select
-                {...register('home_directory')}
-                className="input-field pr-10"
-                disabled={loadingFolders}
-              >
-                <option value="">Select home directory...</option>
-                <option value={`/home/${currentUsername || 'username'}`}>
-                  🏠 /home/{currentUsername || 'username'} (Default)
-                </option>
-                {availableFolders.map((folder) => (
-                  <option key={folder.path} value={folder.path}>
-                    📁 {folder.name} ({folder.path})
+          {/* Only show Home Directory selection for regular users, not admins */}
+          {selectedRole !== 'admin' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Home Directory</label>
+              <div className="relative">
+                <select
+                  {...register('home_directory')}
+                  className="input-field pr-10"
+                  disabled={loadingFolders}
+                >
+                  <option value="">Select home directory...</option>
+                  <option value={`/home/${currentUsername || 'username'}`}>
+                    🏠 /home/{currentUsername || 'username'} (Default)
                   </option>
-                ))}
-              </select>
-              <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                <Home className="h-4 w-4 text-gray-400" />
+                  {availableFolders.map((folder) => (
+                    <option key={folder.path} value={folder.path}>
+                      📁 {folder.name} ({folder.path})
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                  <Home className="h-4 w-4 text-gray-400" />
+                </div>
+              </div>
+              <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0">
+                    <Home className="h-4 w-4 text-blue-600 mt-0.5" />
+                  </div>
+                  <div className="ml-2 text-sm text-blue-800">
+                    <p className="font-medium">Home Directory Selection</p>
+                    <p className="mt-1">
+                      {loadingFolders 
+                        ? 'Loading directories from S3...' 
+                        : `Choose from your S3 root folders or use the default /home/${currentUsername || 'username'} directory.`
+                      }
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+          )}
+
+          {/* Admin Bucket Access Notification */}
+          {selectedRole === 'admin' && (
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-6">
               <div className="flex items-start">
-                <div className="flex-shrink-0">
-                  <Home className="h-4 w-4 text-blue-600 mt-0.5" />
-                </div>
-                <div className="ml-2 text-sm text-blue-800">
-                  <p className="font-medium">Home Directory Selection</p>
-                  <p className="mt-1">
-                    {loadingFolders 
-                      ? 'Loading directories from S3...' 
-                      : `Choose from your S3 root folders or use the default /home/${currentUsername || 'username'} directory.`
-                    }
-                  </p>
+                <Shield className="h-6 w-6 text-purple-600 mt-1 mr-4" />
+                <div className="text-sm text-purple-800">
+                  <p className="font-semibold text-base mb-2">Admin User - Full Bucket Access</p>
+                  <div className="space-y-1 text-sm">
+                    <p>• Has access to all folders and files in the S3 bucket</p>
+                    <p>• No home directory restrictions</p>
+                    <p>• No folder assignments needed</p>
+                    <p>• Can manage all user files and permissions</p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
             <div className="flex items-center justify-between mb-4">
@@ -1220,6 +1254,19 @@ const Users: React.FC = () => {
                   Enable SFTP access for this user
                 </label>
               </div>
+
+              {/* Admin Role Notice */}
+              {selectedRole === 'admin' && enableSftp && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                  <div className="flex items-start">
+                    <Shield className="h-5 w-5 text-purple-600 mt-0.5 mr-3" />
+                    <div className="text-sm text-purple-800">
+                      <p className="font-medium mb-1">Admin User - Full Access</p>
+                      <p>This admin user will automatically have access to all files and folders. No folder assignments needed.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {enableSftp && (
                 <div className="space-y-4 pl-6 border-l-2 border-blue-200">
@@ -1345,16 +1392,18 @@ const Users: React.FC = () => {
             </div>
           </div>
 
-          <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-            <div className="flex items-center justify-between mb-4">
-              <label className="block text-sm font-medium text-gray-700">
-                <Folder className="h-4 w-4 inline mr-2" />
-                Additional Folder Access
-              </label>
-              <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
-                {loadingFolders ? 'Loading...' : `${availableFolders.length} folders available`}
-              </span>
-            </div>
+          {/* Only show folder assignments for regular users, not admins */}
+          {selectedRole !== 'admin' && (
+            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+              <div className="flex items-center justify-between mb-4">
+                <label className="block text-sm font-medium text-gray-700">
+                  <Folder className="h-4 w-4 inline mr-2" />
+                  Additional Folder Access
+                </label>
+                <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
+                  {loadingFolders ? 'Loading...' : `${availableFolders.length} folders available`}
+                </span>
+              </div>
             
             <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-hide">
               {newFolders.map((folder, index) => (
@@ -1443,6 +1492,7 @@ const Users: React.FC = () => {
               </div>
             </div>
           </div>
+          )}
 
           <div className="flex justify-end space-x-2">
             <Button type="button" variant="outline" onClick={() => {
