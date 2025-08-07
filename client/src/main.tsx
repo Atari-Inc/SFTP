@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast'
 import App from './App'
 import { AuthProvider } from './contexts/AuthContext'
 import { FileProvider } from './contexts/FileContext'
+import { SftpFileProvider } from './contexts/SftpFileContext'
 import ErrorBoundary from './components/ErrorBoundary'
 import './index.css'
 
@@ -19,8 +20,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       >
         <AuthProvider>
           <FileProvider>
-            <App />
-            <Toaster position="top-right" />
+            <SftpFileProvider>
+              <App />
+              <Toaster position="top-right" />
+            </SftpFileProvider>
           </FileProvider>
         </AuthProvider>
       </BrowserRouter>

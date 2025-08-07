@@ -11,6 +11,7 @@ from ..models.file import File
 from ..models.user import User
 from ..core.dependencies import get_current_user
 from ..services.s3_service import s3_service
+from ..services.sftp_s3_bridge import sftp_s3_bridge
 from ..services.activity_logger import log_activity
 from ..models.activity import ActivityAction, ActivityStatus
 from ..config import settings
@@ -344,15 +345,21 @@ async def list_files(
     if not path.startswith("/"):
         path = "/" + path
     
-    # For admin users, list files directly from S3
+    # For admin users, list files directly from S3/SFTP
     if current_user.role == "admin":
         # Convert path to S3 prefix
         prefix = path.lstrip("/")
         if prefix and not prefix.endswith("/"):
             prefix += "/"
         
-        # Get files from S3
-        s3_objects = s3_service.list_files(prefix)
+        # Get user context for SFTP operations
+        user_context = _get_user_context(current_user)
+        
+        # List files via SFTP if configured, otherwise S3
+        if user_context:
+            s3_objects = sftp_s3_bridge.list_files(prefix, user_context)
+        else:
+            s3_objects = s3_service.list_files(prefix)
         
         file_responses = []
         processed_paths = set()
@@ -506,14 +513,20 @@ async def list_files(
                 detail="Access denied to this directory"
             )
         
-        # For regular users, use S3 directly (same as admin) - no database storage
+        # For regular users, use S3/SFTP directly (same as admin) - no database storage
         # Convert path to S3 prefix
         prefix = path.lstrip("/")
         if prefix and not prefix.endswith("/"):
             prefix += "/"
         
-        # Get files from S3
-        s3_objects = s3_service.list_files(prefix)
+        # Get user context for SFTP operations
+        user_context = _get_user_context(current_user)
+        
+        # List files via SFTP if configured, otherwise S3
+        if user_context:
+            s3_objects = sftp_s3_bridge.list_files(prefix, user_context)
+        else:
+            s3_objects = s3_service.list_files(prefix)
         
         file_responses = []
         processed_paths = set()
@@ -585,6 +598,16 @@ def _get_mime_type(filename: str) -> Optional[str]:
     mime_type, _ = mimetypes.guess_type(filename)
     return mime_type
 
+def _get_user_context(current_user: User) -> Optional[dict]:
+    """Get user context for SFTP operations"""
+    if current_user.enable_sftp and current_user.private_key:
+        return {
+            'username': current_user.username,
+            'ssh_private_key': current_user.private_key,
+            'use_sftp': True
+        }
+    return None
+
 @router.post("/upload", response_model=dict)
 async def upload_file(
     file: UploadFile = FastAPIFile(...),
@@ -610,8 +633,16 @@ async def upload_file(
         s3_path += "/"
     s3_key = f"{s3_path}{file.filename}" if s3_path else file.filename
     
-    # Upload to S3 only
-    if not s3_service.upload_file(io.BytesIO(content), s3_key, file.content_type):
+    # Get user context for SFTP operations
+    user_context = _get_user_context(current_user)
+    
+    # Upload via SFTP if configured, otherwise S3
+    if user_context:
+        success = sftp_s3_bridge.upload_file(io.BytesIO(content), s3_key, file.content_type, user_context)
+    else:
+        success = s3_service.upload_file(io.BytesIO(content), s3_key, file.content_type)
+    
+    if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload file"
@@ -677,8 +708,15 @@ async def download_file(
         # Extract filename from S3 key
         filename = s3_key.split("/")[-1]
         
-        # Download from S3
-        file_data = s3_service.download_file(s3_key)
+        # Get user context for SFTP operations
+        user_context = _get_user_context(current_user)
+        
+        # Download via SFTP if configured, otherwise S3
+        if user_context:
+            file_data = sftp_s3_bridge.download_file(s3_key, user_context)
+        else:
+            file_data = s3_service.download_file(s3_key)
+        
         if not file_data:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

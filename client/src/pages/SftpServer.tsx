@@ -26,6 +26,8 @@ import {
   User
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import SftpFileBrowser from '@/components/sftp/SftpFileBrowser'
+import sftpService from '@/services/sftpService'
 import toast from 'react-hot-toast'
 
 interface SftpConnection {
@@ -92,6 +94,9 @@ const SftpServer: React.FC = () => {
     username: '',
     privateKey: ''
   })
+  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null)
+  
+  const activeConnection = connections.find(c => c.id === activeConnectionId) || null
 
   useEffect(() => {
     fetchSftpUsers()
@@ -123,13 +128,22 @@ const SftpServer: React.FC = () => {
   }
 
   const handleConnectSftp = async () => {
+    if (!user?.enable_sftp || !user?.private_key) {
+      toast.error('SFTP access not enabled for your account')
+      return
+    }
+
     setIsConnecting(true)
     try {
-      // Simulate connection attempt
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Use real SFTP service
+      const response = await sftpService.createConnection({
+        host: connectionForm.host,
+        port: connectionForm.port,
+        username: connectionForm.username
+      })
       
       const newConnection: SftpConnection = {
-        id: Date.now().toString(),
+        id: response.id,
         host: connectionForm.host,
         port: connectionForm.port,
         username: connectionForm.username,
@@ -140,12 +154,27 @@ const SftpServer: React.FC = () => {
       }
       
       setConnections(prev => [...prev, newConnection])
+      setActiveConnectionId(response.id)
       toast.success(`Connected to ${connectionForm.host}:${connectionForm.port}`)
       setConnectionForm({ host: '', port: 22, username: '', privateKey: '' })
-    } catch (error) {
-      toast.error('Failed to connect to SFTP server')
+    } catch (error: any) {
+      console.error('SFTP connection error:', error)
+      toast.error(error.response?.data?.detail || 'Failed to connect to SFTP server')
     }
     setIsConnecting(false)
+  }
+
+  const handleDisconnectSftp = async (connectionId: string) => {
+    try {
+      await sftpService.closeConnection(connectionId)
+      setConnections(prev => prev.filter(c => c.id !== connectionId))
+      if (activeConnectionId === connectionId) {
+        setActiveConnectionId(null)
+      }
+      toast.success('Disconnected from SFTP server')
+    } catch (error) {
+      toast.error('Failed to disconnect from SFTP server')
+    }
   }
 
   const copyToClipboard = (text: string) => {
@@ -279,6 +308,23 @@ const SftpServer: React.FC = () => {
           </div>
         </div>
 
+        {/* SFTP Access Warning */}
+        {(!user?.enable_sftp || !user?.private_key) && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-8">
+            <div className="flex items-center">
+              <AlertCircle className="h-5 w-5 text-yellow-600 mr-3" />
+              <div>
+                <h3 className="text-sm font-medium text-yellow-800">SFTP Access Not Configured</h3>
+                <p className="text-sm text-yellow-700 mt-1">
+                  {!user?.enable_sftp && "SFTP access is not enabled for your account. "}
+                  {!user?.private_key && "No SSH private key is configured for your account. "}
+                  Please contact your administrator to enable SFTP access and configure SSH keys.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Tabs */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="border-b border-gray-200">
@@ -399,13 +445,26 @@ const SftpServer: React.FC = () => {
                 <div className="bg-gray-50 rounded-lg p-6">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">New SFTP Connection</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <input
-                      type="text"
-                      placeholder="Host"
-                      value={connectionForm.host}
-                      onChange={(e) => setConnectionForm(prev => ({ ...prev, host: e.target.value }))}
-                      className="input-field"
-                    />
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Host (e.g., AWS Transfer Family server)"
+                        value={connectionForm.host}
+                        onChange={(e) => setConnectionForm(prev => ({ ...prev, host: e.target.value }))}
+                        className="input-field"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setConnectionForm(prev => ({ 
+                          ...prev, 
+                          host: `s-${import.meta.env.VITE_TRANSFER_SERVER_ID || 'xxxxxxxxx'}.server.transfer.${import.meta.env.VITE_AWS_REGION || 'us-east-1'}.amazonaws.com`,
+                          username: user?.username || ''
+                        }))}
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        Use AWS Transfer Family
+                      </button>
+                    </div>
                     <input
                       type="number"
                       placeholder="Port"
@@ -481,9 +540,25 @@ const SftpServer: React.FC = () => {
                               <div className="text-xs">{connection.filesTransferred} files</div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                              <button className="text-red-600 hover:text-red-900">
-                                <WifiOff className="h-4 w-4" />
-                              </button>
+                              <div className="flex space-x-2">
+                                <button
+                                  onClick={() => setActiveConnectionId(connection.id)}
+                                  disabled={activeConnectionId === connection.id}
+                                  className={`px-3 py-1 rounded-lg text-xs font-medium ${
+                                    activeConnectionId === connection.id
+                                      ? 'bg-blue-100 text-blue-800'
+                                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                  }`}
+                                >
+                                  {activeConnectionId === connection.id ? 'Active' : 'Select'}
+                                </button>
+                                <button
+                                  onClick={() => handleDisconnectSftp(connection.id)}
+                                  className="text-red-600 hover:text-red-900"
+                                >
+                                  <WifiOff className="h-4 w-4" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -585,24 +660,17 @@ const SftpServer: React.FC = () => {
               <div className="space-y-6">
                 <div className="flex justify-between items-center">
                   <h3 className="text-lg font-semibold text-gray-900">Remote File Browser</h3>
-                  <div className="flex space-x-2">
-                    <button className="btn-secondary">
-                      <Upload className="h-4 w-4 mr-2" />
-                      Upload
-                    </button>
-                    <button className="btn-secondary">
-                      <Download className="h-4 w-4 mr-2" />
-                      Download
-                    </button>
-                  </div>
+                  {activeConnection && (
+                    <div className="text-sm text-gray-600">
+                      Active Connection: {activeConnection.username}@{activeConnection.host}:{activeConnection.port}
+                    </div>
+                  )}
                 </div>
 
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-center text-gray-500 py-12">
-                    <FolderOpen className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                    <p>Select an active SFTP connection to browse files</p>
-                  </div>
-                </div>
+                <SftpFileBrowser 
+                  activeConnection={activeConnection}
+                  connections={connections}
+                />
               </div>
             )}
 
