@@ -206,101 +206,71 @@ async def list_files(
                 detail="Access denied to this directory"
             )
         
-        # Get files from database
-        files = db.query(File).filter(
-            File.owner_id == current_user.id,
-            File.path == path
-        ).all()
+        # For regular users, use S3 directly (same as admin) - no database storage
+        # Convert path to S3 prefix
+        prefix = path.lstrip("/")
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
         
-        # Convert to response format
+        # Get files from S3
+        s3_objects = s3_service.list_files(prefix)
+        
         file_responses = []
-        for file in files:
-            file_resp = {
-                "id": str(file.id),
-                "name": file.name,
-                "size": file.size,
-                "type": file.type.value,
-                "path": file.path,
-                "mime_type": file.mime_type,
-                "permissions": file.permissions,
-                "owner": current_user.username,
-                "group": file.group,
-                "created_at": file.created_at.isoformat() if file.created_at else None,
-                "modified_at": file.modified_at.isoformat() if file.modified_at else None,
-                "accessed_at": file.accessed_at.isoformat() if file.accessed_at else None
-            }
-            file_responses.append(file_resp)
+        processed_paths = set()
         
-        # If accessing user's home directory or assigned folder and no database files exist, also check S3 directly
-        is_assigned_folder = False
-        for folder in user_folders:
-            if path == folder.folder_path or path.startswith(folder.folder_path + "/"):
-                is_assigned_folder = True
-                break
-        
-        # For assigned folders, always check S3 directly since they may not have database records
-        if is_assigned_folder or (path.startswith(f"/home/{current_user.username}") and len(file_responses) == 0):
-            # Check S3 for files in the assigned folder or user's home directory
-            s3_prefix = path.lstrip("/")
-            if s3_prefix and not s3_prefix.endswith("/"):
-                s3_prefix += "/"
+        for obj in s3_objects:
+            key = obj.get('Key', '')
+            size = obj.get('Size', 0)
+            last_modified = obj.get('LastModified')
             
-            s3_objects = s3_service.list_files(s3_prefix)
-            processed_paths = set()
-            
-            for obj in s3_objects:
-                key = obj.get('Key', '')
-                size = obj.get('Size', 0)
-                last_modified = obj.get('LastModified')
+            # Skip empty objects or current directory
+            if not key or key == prefix:
+                continue
                 
-                # Skip empty objects or current directory
-                if not key or key == s3_prefix:
+            # Get relative path from current directory
+            relative_key = key[len(prefix):] if prefix else key
+            
+            # Handle directory structure - show only direct children
+            if "/" in relative_key:
+                # This is a subdirectory or nested file
+                dir_name = relative_key.split("/")[0]
+                if dir_name in processed_paths:
                     continue
-                    
-                # Get relative path from current directory
-                relative_key = key[len(s3_prefix):] if s3_prefix else key
+                processed_paths.add(dir_name)
                 
-                # Handle directory structure - show only direct children
-                if "/" in relative_key:
-                    # This is a subdirectory or nested file
-                    dir_name = relative_key.split("/")[0]
-                    if dir_name in processed_paths:
-                        continue
-                    processed_paths.add(dir_name)
-                    
-                    # Create folder entry
-                    file_resp = {
-                        "id": f"folder_{dir_name}_{hash(path + dir_name)}",
-                        "name": dir_name,
-                        "size": 0,
-                        "type": "folder",
-                        "path": f"{path.rstrip('/')}/{dir_name}" if path != "/" else f"/{dir_name}",
-                        "mime_type": None,
-                        "permissions": "755",
-                        "owner": current_user.username,
-                        "group": current_user.username,
-                        "created_at": last_modified.isoformat() if last_modified else None,
-                        "modified_at": last_modified.isoformat() if last_modified else None,
-                        "accessed_at": None
-                    }
-                    file_responses.append(file_resp)
-                else:
-                    # This is a file in current directory
-                    file_resp = {
-                        "id": f"file_{relative_key}_{hash(key)}",
-                        "name": relative_key,
-                        "size": size,
-                        "type": "file",
-                        "path": f"{path.rstrip('/')}/{relative_key}" if path != "/" else f"/{relative_key}",
-                        "mime_type": _get_mime_type(relative_key),
-                        "permissions": "644",
-                        "owner": current_user.username,
-                        "group": current_user.username,
-                        "created_at": last_modified.isoformat() if last_modified else None,
-                        "modified_at": last_modified.isoformat() if last_modified else None,
-                        "accessed_at": None
-                    }
-                    file_responses.append(file_resp)
+                # Create folder entry
+                file_resp = {
+                    "id": f"folder_{dir_name}_{hash(path + dir_name)}",
+                    "name": dir_name,
+                    "size": 0,
+                    "type": "folder",
+                    "path": f"{path.rstrip('/')}/{dir_name}" if path != "/" else f"/{dir_name}",
+                    "mime_type": None,
+                    "permissions": "755",
+                    "owner": current_user.username,
+                    "group": current_user.username,
+                    "created_at": last_modified.isoformat() if last_modified else None,
+                    "modified_at": last_modified.isoformat() if last_modified else None,
+                    "accessed_at": None
+                }
+            else:
+                # This is a file in current directory
+                file_resp = {
+                    "id": f"file_{relative_key}_{hash(key)}",
+                    "name": relative_key,
+                    "size": size,
+                    "type": "file",
+                    "path": f"{path.rstrip('/')}/{relative_key}" if path != "/" else f"/{relative_key}",
+                    "mime_type": _get_mime_type(relative_key),
+                    "permissions": "644",
+                    "owner": current_user.username,
+                    "group": current_user.username,
+                    "created_at": last_modified.isoformat() if last_modified else None,
+                    "modified_at": last_modified.isoformat() if last_modified else None,
+                    "accessed_at": None
+                }
+            
+            file_responses.append(file_resp)
         
         return {
             "data": file_responses,
@@ -315,14 +285,14 @@ def _get_mime_type(filename: str) -> Optional[str]:
     mime_type, _ = mimetypes.guess_type(filename)
     return mime_type
 
-@router.post("/upload", response_model=FileResponse)
+@router.post("/upload", response_model=dict)
 async def upload_file(
     file: UploadFile = FastAPIFile(...),
     path: str = Form("/"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload a file"""
+    """Upload a file - S3 only, no database storage"""
     # Validate file size
     file_size = 0
     content = await file.read()
@@ -334,63 +304,49 @@ async def upload_file(
             detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE}"
         )
     
-    # Generate S3 key - use path-based structure for admin visibility
-    file_id = uuid4()
     # Normalize the path for S3 key
     s3_path = path.strip("/")
     if s3_path and not s3_path.endswith("/"):
         s3_path += "/"
     s3_key = f"{s3_path}{file.filename}" if s3_path else file.filename
     
-    # Upload to S3
+    # Upload to S3 only
     if not s3_service.upload_file(io.BytesIO(content), s3_key, file.content_type):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload file"
         )
     
-    # Create database record
-    db_file = File(
-        id=file_id,
-        name=file.filename,
-        size=file_size,
-        type=FileType.FILE,
-        path=path,
-        s3_key=s3_key,
-        mime_type=file.content_type,
-        owner_id=current_user.id
-    )
-    
-    db.add(db_file)
-    db.commit()
-    db.refresh(db_file)
-    
-    # Log activity
+    # Log activity (no database file record)
     await log_activity(
         db=db,
         user_id=current_user.id,
         username=current_user.username,
         action=ActivityAction.UPLOAD,
         resource="file",
-        resource_id=str(db_file.id),
+        resource_id=s3_key,  # Use S3 key as ID
         status=ActivityStatus.SUCCESS,
-        details={"filename": file.filename, "size": file_size}
+        details={"filename": file.filename, "size": file_size, "s3_key": s3_key}
     )
     
-    return FileResponse(
-        id=db_file.id,
-        name=db_file.name,
-        size=db_file.size,
-        type=db_file.type,
-        path=db_file.path,
-        mime_type=db_file.mime_type,
-        permissions=db_file.permissions,
-        owner=current_user.username,
-        group=db_file.group,
-        created_at=db_file.created_at,
-        modified_at=db_file.modified_at,
-        accessed_at=db_file.accessed_at
-    )
+    # Return file info (generated ID format like file listing)
+    return {
+        "id": f"file_{file.filename}_{hash(s3_key)}",
+        "name": file.filename,
+        "size": file_size,
+        "type": "file",
+        "path": path,
+        "s3_key": s3_key,
+        "mime_type": file.content_type,
+        "permissions": "644",
+        "owner": current_user.username,
+        "group": current_user.username,
+        "created_at": datetime.utcnow().isoformat(),
+        "modified_at": datetime.utcnow().isoformat(),
+        "accessed_at": None,
+        "success": True,
+        "message": "File uploaded successfully"
+    }
 
 @router.get("/{file_id}/download")
 async def download_file(
@@ -575,13 +531,13 @@ async def delete_files(
         "success": len(errors) == 0
     }
 
-@router.post("/folder", response_model=FileResponse)
+@router.post("/folder", response_model=dict)
 async def create_folder(
     folder_data: dict,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new folder"""
+    """Create a new folder - S3 only, no database storage"""
     name = folder_data.get("name")
     path = folder_data.get("path", "/")
     
@@ -594,9 +550,10 @@ async def create_folder(
     # Generate full folder path for S3
     folder_path = f"{path.rstrip('/')}/{name}" if path != "/" else f"/{name}"
     s3_folder_path = folder_path.lstrip("/")
+    s3_key = f"{s3_folder_path}/"
     
     # Check if folder already exists in S3
-    if s3_service.file_exists(f"{s3_folder_path}/"):
+    if s3_service.file_exists(s3_key):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Folder already exists"
@@ -609,20 +566,6 @@ async def create_folder(
             detail="Failed to create folder in S3"
         )
     
-    # Create folder record in database
-    folder = File(
-        name=name,
-        size=0,
-        type=FileType.FOLDER,
-        path=path,
-        s3_key=f"{s3_folder_path}/",
-        owner_id=current_user.id
-    )
-    
-    db.add(folder)
-    db.commit()
-    db.refresh(folder)
-    
     # Log activity
     await log_activity(
         db=db,
@@ -630,25 +573,29 @@ async def create_folder(
         username=current_user.username,
         action=ActivityAction.CREATE,
         resource="folder",
-        resource_id=str(folder.id),
+        resource_id=f"folder_{name}_{hash(s3_key)}",
         status=ActivityStatus.SUCCESS,
         details={"folder_name": name, "path": path, "s3_path": s3_folder_path}
     )
     
-    return FileResponse(
-        id=folder.id,
-        name=folder.name,
-        size=folder.size,
-        type=folder.type,
-        path=folder.path,
-        mime_type=folder.mime_type,
-        permissions=folder.permissions,
-        owner=current_user.username,
-        group=folder.group,
-        created_at=folder.created_at,
-        modified_at=folder.modified_at,
-        accessed_at=folder.accessed_at
-    )
+    # Return folder info (generated ID format like file listing)
+    from datetime import datetime
+    now = datetime.utcnow()
+    
+    return {
+        "id": f"folder_{name}_{hash(s3_key)}",
+        "name": name,
+        "size": 0,
+        "type": "folder",
+        "path": folder_path,
+        "mime_type": None,
+        "permissions": "755",
+        "owner": current_user.username,
+        "group": "admin",
+        "created_at": now.isoformat(),
+        "modified_at": now.isoformat(),
+        "accessed_at": None
+    }
 
 @router.put("/{file_id}/rename", response_model=FileResponse)
 async def rename_file(
