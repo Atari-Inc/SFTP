@@ -68,6 +68,11 @@ export const authAPI = {
   login: (credentials: { username: string; password: string }) =>
     apiClient.post('/auth/login', credentials),
   
+  getCurrentUser: () => {
+    console.log('AuthAPI: Getting current user info')
+    return apiClient.get('/auth/me')
+  },
+  
   register: (userData: { username: string; email: string; password: string }) =>
     apiClient.post('/auth/register', userData),
   
@@ -93,8 +98,21 @@ export const fileAPI = {
       },
     }),
   
-  downloadFile: (fileId: string) =>
-    apiClient.get(`/files/${encodeURIComponent(fileId)}/download`, { responseType: 'blob' }),
+  downloadFile: (fileId: string) => {
+    console.log('API downloadFile called with fileId:', fileId)
+    // Double encode to handle special characters like : in s3_file:path
+    const encodedFileId = encodeURIComponent(fileId)
+    console.log('Encoded fileId:', encodedFileId)
+    return apiClient.get(`/files/${encodedFileId}/download`, { responseType: 'blob' })
+  },
+  
+  downloadFileByPath: (filePath: string) => {
+    console.log('API downloadFileByPath called with filePath:', filePath)
+    return apiClient.get(`/files/download-by-path`, { 
+      params: { path: filePath },
+      responseType: 'blob' 
+    })
+  },
   
   deleteFiles: (data: { file_ids: string[] }) =>
     apiClient.delete('/files', { data }),
@@ -108,8 +126,22 @@ export const fileAPI = {
   copyFiles: (data: { file_ids: string[]; target_path: string }) =>
     apiClient.post('/files/copy', data),
   
-  renameFile: (fileId: string, newName: string) =>
-    apiClient.put(`/files/${encodeURIComponent(fileId)}/rename`, { name: newName }),
+  renameFile: (fileId: string, newName: string) => {
+    console.log('API renameFile called with fileId:', fileId, 'newName:', newName)
+    const encodedFileId = encodeURIComponent(fileId)
+    console.log('Encoded fileId:', encodedFileId)
+    return apiClient.put(`/files/${encodedFileId}/rename`, { name: newName })
+  },
+  
+  renameFileByPath: (filePath: string, newName: string) => {
+    console.log('API renameFileByPath called with filePath:', filePath, 'newName:', newName)
+    return apiClient.put(`/files/rename-by-path`, {}, {
+      params: { 
+        old_path: filePath,
+        new_name: newName 
+      }
+    })
+  },
   
   shareFile: (data: { file_id: string; share_with: string[]; permission?: string; expires_in?: number }) =>
     apiClient.post('/files/share', data),
@@ -189,7 +221,10 @@ export const activityAPI = {
     endDate?: string
     action?: string
     userId?: string
-  }) => apiClient.get('/activity', { params }),
+  }) => {
+    console.log('ActivityAPI: Making request to /activity with params:', params)
+    return apiClient.get('/activity/', { params })
+  },
   
   getLogById: (logId: string) => apiClient.get(`/activity/${logId}`),
   
@@ -204,7 +239,10 @@ export const activityAPI = {
 }
 
 export const statsAPI = {
-  getDashboardStats: () => apiClient.get('/stats/dashboard'),
+  getDashboardStats: () => {
+    console.log('StatsAPI: Making request to /stats/dashboard')
+    return apiClient.get('/stats/dashboard')
+  },
   
   getStorageStats: () => apiClient.get('/stats/storage'),
   

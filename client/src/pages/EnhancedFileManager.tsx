@@ -91,6 +91,7 @@ import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import toast from 'react-hot-toast'
+import { checkAuthStatus } from '@/utils/authCheck'
 
 interface FileItemType {
   id: string
@@ -258,6 +259,7 @@ const EnhancedFileManager: React.FC = () => {
 
   const handleDownloadSelected = async () => {
     for (const fileId of selectedFiles) {
+      console.log('Download button clicked for file:', fileId)
       await downloadFile(fileId)
     }
   }
@@ -275,17 +277,33 @@ const EnhancedFileManager: React.FC = () => {
   }
 
   const handleRename = (file: FileItemType) => {
+    console.log('handleRename called with:', file)
+    
+    // Check authentication before allowing rename
+    const authStatus = checkAuthStatus()
+    if (authStatus.status !== 'valid') {
+      toast.error(authStatus.message || 'Please log in to rename files')
+      return
+    }
+    
     setSelectedFile(file)
     setRenameValue(file.name)
     setShowRenameModal(true)
   }
 
   const handleRenameSubmit = async () => {
+    console.log('handleRenameSubmit called', { selectedFile, renameValue })
     if (selectedFile && renameValue.trim()) {
-      await renameFile(selectedFile.id, renameValue.trim())
-      setShowRenameModal(false)
-      setRenameValue('')
-      setSelectedFile(null)
+      try {
+        await renameFile(selectedFile.id, renameValue.trim())
+        setShowRenameModal(false)
+        setRenameValue('')
+        setSelectedFile(null)
+      } catch (error) {
+        console.error('Error in handleRenameSubmit:', error)
+      }
+    } else {
+      console.log('Rename conditions not met:', { hasSelectedFile: !!selectedFile, hasRenameValue: !!renameValue.trim() })
     }
   }
 
@@ -1077,7 +1095,18 @@ const EnhancedFileManager: React.FC = () => {
                         <Button onClick={() => handleRename(file)} variant="outline" size="sm">
                           <Edit2 className="h-4 w-4" />
                         </Button>
-                        <Button onClick={() => downloadFile(file.id)} variant="outline" size="sm">
+                        <Button onClick={() => {
+                          console.log('Download button clicked for file:', file)
+                          
+                          // Check authentication before allowing download
+                          const authStatus = checkAuthStatus()
+                          if (authStatus.status !== 'valid') {
+                            toast.error(authStatus.message || 'Please log in to download files')
+                            return
+                          }
+                          
+                          downloadFile(file.id)
+                        }} variant="outline" size="sm">
                           <Download className="h-4 w-4" />
                         </Button>
                         <Button onClick={() => handleShare(file)} variant="outline" size="sm">

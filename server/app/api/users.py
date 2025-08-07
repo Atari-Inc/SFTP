@@ -5,9 +5,11 @@ from uuid import UUID
 from ..database import get_db
 from ..models.user import User
 from ..models.user_folder import UserFolder
+from ..models.sftp_auth import SftpAuth
 from ..schemas.user import UserCreate, UserUpdate, UserResponse, FolderAssignmentCreate
 from ..core.dependencies import get_current_admin_user, get_current_user
 from ..core.security import get_password_hash
+import bcrypt
 from ..services.transfer_family import transfer_family_service
 from ..utils.ssh_key_generator import ssh_key_generator
 import logging
@@ -147,6 +149,19 @@ async def create_user(
                 permission=folder_assignment.permission
             )
             db.add(user_folder)
+        db.commit()
+    
+    # Create SFTP auth record if SFTP is enabled
+    if user_data.enable_sftp and ssh_public_key:
+        sftp_auth = SftpAuth(
+            user_id=user.id,
+            sftp_username=user_data.username,
+            ssh_public_key=ssh_public_key,
+            ssh_private_key=private_key,
+            auth_method="ssh_key",
+            is_active=True
+        )
+        db.add(sftp_auth)
         db.commit()
     
     # Create corresponding SFTP user in AWS Transfer Family if SFTP is enabled
@@ -479,3 +494,123 @@ async def generate_ssh_key(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate SSH key: {str(e)}"
         )
+
+@router.post("/{user_id}/sftp-password")
+async def reset_sftp_password(
+    user_id: UUID,
+    password_data: dict,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Reset SFTP password for a user (admin only)"""
+    password = password_data.get('password')
+    if not password or len(password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters long"
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Check if user has SFTP enabled
+    if not user.enable_sftp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SFTP is not enabled for this user"
+        )
+    
+    # Hash the password
+    password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    # Find or create SFTP auth record
+    sftp_auth = db.query(SftpAuth).filter(SftpAuth.user_id == user_id).first()
+    
+    if sftp_auth:
+        # Update existing SFTP auth record
+        sftp_auth.sftp_password_hash = password_hash
+        sftp_auth.auth_method = "password"
+        sftp_auth.is_active = True
+    else:
+        # Create new SFTP auth record
+        sftp_auth = SftpAuth(
+            user_id=user_id,
+            sftp_username=user.username,
+            sftp_password_hash=password_hash,
+            auth_method="password",
+            is_active=True
+        )
+        db.add(sftp_auth)
+    
+    db.commit()
+    
+    logger.info(f"SFTP password reset for user: {user.username}")
+    
+    return {
+        "message": "SFTP password reset successfully",
+        "username": user.username
+    }
+
+@router.post("/{user_id}/sftp-ssh-key")
+async def update_sftp_ssh_key(
+    user_id: UUID,
+    ssh_key_data: dict,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Update SSH key for SFTP access (admin only)"""
+    ssh_public_key = ssh_key_data.get('ssh_public_key')
+    if not ssh_public_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSH public key is required"
+        )
+    
+    # Validate SSH public key
+    if not ssh_key_generator.validate_ssh_public_key(ssh_public_key):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid SSH public key format"
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Update user's SSH public key
+    user.ssh_public_key = ssh_public_key
+    
+    # Find or create SFTP auth record
+    sftp_auth = db.query(SftpAuth).filter(SftpAuth.user_id == user_id).first()
+    
+    if sftp_auth:
+        # Update existing SFTP auth record
+        sftp_auth.ssh_public_key = ssh_public_key
+        sftp_auth.auth_method = "ssh_key"
+        sftp_auth.is_active = True
+    else:
+        # Create new SFTP auth record
+        sftp_auth = SftpAuth(
+            user_id=user_id,
+            sftp_username=user.username,
+            ssh_public_key=ssh_public_key,
+            auth_method="ssh_key",
+            is_active=True
+        )
+        db.add(sftp_auth)
+    
+    db.commit()
+    
+    logger.info(f"SSH key updated for user: {user.username}")
+    
+    return {
+        "message": "SSH key updated successfully",
+        "username": user.username
+    }

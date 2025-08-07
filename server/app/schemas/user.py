@@ -32,6 +32,7 @@ class UserLogin(BaseModel):
 class UserResponse(UserBase):
     id: UUID4
     is_active: bool
+    enable_sftp: bool
     last_login: Optional[datetime]
     created_at: datetime
     updated_at: datetime

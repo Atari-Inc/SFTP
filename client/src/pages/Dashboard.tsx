@@ -13,6 +13,8 @@ import { statsAPI } from '@/services/api'
 import { DashboardStats } from '@/types'
 import { formatBytes } from '@/utils'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { checkAuthStatus } from '@/utils/authCheck'
+import toast from 'react-hot-toast'
 
 const StatCard: React.FC<{
   title: string
@@ -50,11 +52,24 @@ const Dashboard: React.FC = () => {
   }, [])
 
   const loadDashboardStats = async () => {
+    // Check authentication before making API call
+    const authStatus = checkAuthStatus()
+    if (authStatus.status !== 'valid') {
+      toast.error(authStatus.message || 'Please log in to view dashboard')
+      setLoading(false)
+      return
+    }
+    
     try {
       const response = await statsAPI.getDashboardStats()
       setStats(response.data)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load dashboard stats:', error)
+      if (error.response?.status === 403) {
+        toast.error('Authentication required. Please log in again.')
+      } else {
+        toast.error('Failed to load dashboard data')
+      }
     } finally {
       setLoading(false)
     }

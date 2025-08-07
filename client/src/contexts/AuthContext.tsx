@@ -98,7 +98,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const checkAuthStatus = async () => {
     try {
-      const response = await authAPI.me()
+      const response = await authAPI.getCurrentUser()
       dispatch({ type: 'LOGIN_SUCCESS', payload: response.data })
     } catch (error) {
       localStorage.removeItem('token')

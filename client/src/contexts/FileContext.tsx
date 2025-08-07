@@ -240,7 +240,21 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
 
   const downloadFile = async (fileId: string) => {
     const file = state.files.find(f => f.id === fileId)
-    if (!file) return
+    if (!file) {
+      console.error('File not found in state:', fileId)
+      console.log('Available files:', state.files.map(f => ({ id: f.id, name: f.name })))
+      toast.error('File not found')
+      return
+    }
+    
+    console.log('Downloading file:', { fileId, fileName: file.name, filePath: file.path })
+    
+    // Check if user is authenticated
+    const token = localStorage.getItem('token')
+    if (!token) {
+      toast.error('Please log in to download files')
+      return
+    }
     
     const operationId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
     const operation: FileOperation = {
@@ -259,9 +273,19 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
         updates: { status: 'in-progress' } 
       }})
       
-      const response = await fileAPI.downloadFile(fileId)
+      console.log('Making download API call using path-based approach for file:', file.path)
+      const response = await fileAPI.downloadFileByPath(file.path)
+      console.log('Download response received:', response.headers['content-type'])
       
-      const url = window.URL.createObjectURL(new Blob([response.data]))
+      // Handle different response types
+      let blob: Blob
+      if (response.data instanceof Blob) {
+        blob = response.data
+      } else {
+        blob = new Blob([response.data])
+      }
+      
+      const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
       link.setAttribute('download', file.name)
@@ -278,7 +302,8 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
       toast.success(`${file.name} downloaded successfully`)
       
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Download failed'
+      console.error('Download error:', error)
+      const errorMessage = error.response?.data?.message || error.message || 'Download failed'
       dispatch({ type: 'UPDATE_OPERATION', payload: { 
         id: operationId, 
         updates: { status: 'failed', error: errorMessage } 
@@ -374,12 +399,38 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
   }
 
   const renameFile = async (fileId: string, newName: string) => {
+    const file = state.files.find(f => f.id === fileId)
+    console.log('Renaming file:', { 
+      fileId, 
+      newName, 
+      currentName: file?.name,
+      filePath: file?.path 
+    })
+    
+    // Check if user is authenticated
+    const token = localStorage.getItem('token')
+    if (!token) {
+      toast.error('Please log in to rename files')
+      return
+    }
+    
     try {
-      const response = await fileAPI.renameFile(fileId, newName)
+      const file = state.files.find(f => f.id === fileId)
+      if (!file) {
+        toast.error('File not found')
+        return
+      }
+      
+      console.log('Using path-based rename for file:', file.path)
+      const response = await fileAPI.renameFileByPath(file.path, newName)
+      console.log('Rename response:', response.data)
       dispatch({ type: 'UPDATE_FILE', payload: response.data })
       toast.success(`File renamed successfully`)
+      // Refresh file list to show updated file
+      await loadFiles()
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Failed to rename file'
+      console.error('Rename error:', error)
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to rename file'
       toast.error(errorMessage)
     }
   }

@@ -38,13 +38,16 @@ class S3Service:
     def download_file(self, key: str) -> Optional[bytes]:
         """Download a file from S3"""
         try:
+            print(f"S3Service: Attempting to download key: {key} from bucket: {self.bucket_name}")
             response = self.s3_client.get_object(
                 Bucket=self.bucket_name,
                 Key=key
             )
-            return response['Body'].read()
+            data = response['Body'].read()
+            print(f"S3Service: Successfully downloaded {len(data)} bytes")
+            return data
         except ClientError as e:
-            print(f"Error downloading file from S3: {e}")
+            print(f"S3Service: Error downloading file from S3 - Key: {key}, Error: {e}")
             return None
     
     def delete_file(self, key: str) -> bool:

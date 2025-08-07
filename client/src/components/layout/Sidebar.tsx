@@ -13,6 +13,7 @@ import {
   Terminal
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import toast from 'react-hot-toast'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: Home },
@@ -36,7 +37,7 @@ const Sidebar: React.FC = () => {
     
     // Check SFTP requirement - show for admin or users with SFTP enabled
     if (item.requiresSftp) {
-      return user?.role === 'admin' || user?.sftp_enabled
+      return user?.role === 'admin' || user?.enable_sftp
     }
     
     return true

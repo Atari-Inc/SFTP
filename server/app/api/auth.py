@@ -11,6 +11,43 @@ from ..models.activity import ActivityAction, ActivityStatus
 
 router = APIRouter()
 
+@router.get("/me")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+):
+    """Get current user information for debugging"""
+    return {
+        "id": str(current_user.id),
+        "username": current_user.username,
+        "email": current_user.email,
+        "role": current_user.role,
+        "is_active": current_user.is_active,
+        "enable_sftp": current_user.enable_sftp
+    }
+
+@router.post("/debug-token")
+async def debug_token(request_data: dict):
+    """Debug endpoint to check token validity without authentication"""
+    from ..core.security import decode_token
+    
+    token = request_data.get('token')
+    if not token:
+        return {"status": "error", "message": "No token provided"}
+    
+    try:
+        payload = decode_token(token)
+        if payload:
+            return {
+                "status": "valid", 
+                "user_id": payload.get("sub"), 
+                "exp": payload.get("exp"),
+                "message": "Token is valid"
+            }
+        else:
+            return {"status": "invalid", "message": "Token decode failed"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @router.post("/login", response_model=Token)
 async def login(
     request: Request,

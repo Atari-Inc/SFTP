@@ -156,9 +156,9 @@ const Users: React.FC = () => {
         username: user.username,
         email: user.email,
         role: user.role,
-        isActive: user.isActive,
-        lastLogin: user.lastLogin,
-        createdAt: user.createdAt,
+        isActive: user.is_active,
+        lastLogin: user.last_login,
+        createdAt: user.created_at,
         enableSftp: user.folder_assignments?.length > 0 ? 'Yes' : 'No'
       }))
 
@@ -170,7 +170,7 @@ const Users: React.FC = () => {
             user.username,
             user.email,
             user.role,
-            user.isActive ? 'Active' : 'Inactive',
+            user.is_active ? 'Active' : 'Inactive',
             user.lastLogin ? formatDate(user.lastLogin) : 'Never',
             formatDate(user.createdAt),
             user.enableSftp
@@ -237,7 +237,7 @@ const Users: React.FC = () => {
       }
       if (filters.status) {
         const isActive = filters.status === 'active'
-        filteredUsers = filteredUsers.filter(user => user.isActive === isActive)
+        filteredUsers = filteredUsers.filter(user => user.is_active === isActive)
       }
       if (filters.enableSftp) {
         const hasSftp = filters.enableSftp === 'yes'

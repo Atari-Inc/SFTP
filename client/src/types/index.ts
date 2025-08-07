@@ -4,7 +4,7 @@ export interface User {
   email: string
   role: 'admin' | 'user'
   is_active: boolean
-  sftp_enabled?: boolean
+  enable_sftp: boolean
   home_directory?: string
   last_login?: string
   created_at: string

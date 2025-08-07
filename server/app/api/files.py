@@ -17,6 +17,295 @@ from ..config import settings
 
 router = APIRouter()
 
+@router.get("/test")
+async def test_endpoint():
+    """Test endpoint to verify files API is working"""
+    return {"message": "Files API is working", "timestamp": datetime.utcnow().isoformat()}
+
+@router.get("/test-file-listing")
+async def test_file_listing(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Test endpoint to check file ID generation"""
+    
+    # Test different paths
+    test_paths = ["/", "/atari-files-transfer", "/atari-files-transfer/suraj"]
+    results = {}
+    
+    for test_path in test_paths:
+        print(f"\n=== TESTING PATH: {test_path} ===")
+        
+        # Normalize path
+        if not test_path.startswith("/"):
+            test_path = "/" + test_path
+        
+        # Convert path to S3 prefix
+        prefix = test_path.lstrip("/")
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+            
+        print(f"S3 prefix: '{prefix}'")
+        
+        # Get files from S3
+        s3_objects = s3_service.list_files(prefix)
+        
+        file_responses = []
+        processed_paths = set()
+        
+        for obj in s3_objects[:3]:  # Limit to first 3 for testing
+            key = obj.get('Key', '')
+            size = obj.get('Size', 0)
+            
+            if not key or key == prefix:
+                continue
+                
+            # Get relative path from current directory
+            relative_key = key[len(prefix):] if prefix else key
+            
+            # Handle directory structure - show only direct children
+            if "/" in relative_key:
+                first_slash_index = relative_key.find("/")
+                dir_name = relative_key[:first_slash_index]
+                remaining_path = relative_key[first_slash_index + 1:]
+                
+                if remaining_path:  # There's more path after the first directory
+                    if dir_name not in processed_paths:
+                        processed_paths.add(dir_name)
+                        # Create folder entry for the subdirectory  
+                        folder_s3_key = f"{prefix}{dir_name}" if prefix else dir_name
+                        file_resp = {
+                            "id": f"s3_folder:{folder_s3_key}",
+                            "name": dir_name,
+                            "type": "folder"
+                        }
+                        file_responses.append(file_resp)
+                else:
+                    continue  # Skip directory markers
+            else:
+                # This is a file in current directory
+                file_resp = {
+                    "id": f"s3_file:{key}",
+                    "name": relative_key,
+                    "type": "file",
+                    "size": size
+                }
+                file_responses.append(file_resp)
+        
+        results[test_path] = {
+            "prefix": prefix,
+            "s3_objects_count": len(s3_objects),
+            "generated_items": file_responses
+        }
+        
+        print(f"Generated {len(file_responses)} items:")
+        for item in file_responses:
+            print(f"  - {item['name']} ({item['type']}) → ID: {item['id']}")
+    
+    return results
+
+@router.get("/download-by-path")
+async def download_file_by_path(
+    path: str = Query(..., description="File path to download"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Download a file using its full path"""
+    print(f"\n=== PATH-BASED DOWNLOAD ===")
+    print(f"Requested path: {path}")
+    print(f"User: {current_user.username}")
+    
+    # Normalize path - remove leading slash to get S3 key
+    s3_key = path.lstrip('/')
+    print(f"S3 key: {s3_key}")
+    
+    if not s3_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file path"
+        )
+    
+    try:
+        # Check if it's a folder (ends with / or is a directory)
+        if s3_key.endswith('/') or '.' not in s3_key.split('/')[-1]:
+            # This might be a folder - try to download as ZIP
+            if not s3_key.endswith('/'):
+                s3_key += '/'
+            
+            # List files in the folder
+            objects = s3_service.list_files(s3_key)
+            if not objects:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Folder not found or empty"
+                )
+            
+            # Create ZIP file
+            import zipfile
+            from io import BytesIO
+            
+            folder_name = s3_key.rstrip('/').split('/')[-1] or 'files'
+            zip_buffer = BytesIO()
+            
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for obj in objects:
+                    obj_key = obj.get('Key', '')
+                    if obj_key and obj_key != s3_key:
+                        # Download file content
+                        file_data = s3_service.download_file(obj_key)
+                        if file_data:
+                            # Add to zip with relative path
+                            relative_path = obj_key[len(s3_key):]
+                            zip_file.writestr(relative_path, file_data)
+            
+            zip_buffer.seek(0)
+            
+            # Log activity
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                username=current_user.username,
+                action=ActivityAction.DOWNLOAD,
+                resource="folder",
+                resource_id=path,
+                status=ActivityStatus.SUCCESS,
+                details={"folder_name": folder_name, "path": path}
+            )
+            
+            return StreamingResponse(
+                zip_buffer,
+                media_type='application/zip',
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"{folder_name}.zip\""
+                }
+            )
+        
+        else:
+            # This is a file
+            file_data = s3_service.download_file(s3_key)
+            if not file_data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found"
+                )
+            
+            filename = s3_key.split('/')[-1]
+            
+            # Get file metadata for proper content type
+            metadata = s3_service.get_object_metadata(s3_key)
+            content_type = metadata.get('content_type') if metadata else _get_mime_type(filename)
+            
+            # Log activity
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                username=current_user.username,
+                action=ActivityAction.DOWNLOAD,
+                resource="file",
+                resource_id=path,
+                status=ActivityStatus.SUCCESS,
+                details={"filename": filename, "path": path}
+            )
+            
+            return StreamingResponse(
+                io.BytesIO(file_data),
+                media_type=content_type or 'application/octet-stream',
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"{filename}\""
+                }
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Download error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Download failed"
+        )
+
+@router.put("/rename-by-path")
+async def rename_file_by_path(
+    old_path: str = Query(..., description="Current file path"),
+    new_name: str = Query(..., description="New file name"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Rename a file using its full path"""
+    print(f"\n=== PATH-BASED RENAME ===")
+    print(f"Old path: {old_path}")
+    print(f"New name: {new_name}")
+    print(f"User: {current_user.username}")
+    
+    # Normalize paths
+    old_s3_key = old_path.lstrip('/')
+    
+    if not old_s3_key or not new_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid path or name"
+        )
+    
+    # Generate new S3 key
+    path_parts = old_s3_key.split('/')
+    path_parts[-1] = new_name  # Replace filename with new name
+    new_s3_key = '/'.join(path_parts)
+    
+    print(f"Old S3 key: {old_s3_key}")
+    print(f"New S3 key: {new_s3_key}")
+    
+    try:
+        # Check if old file exists
+        if old_s3_key.endswith('/') or '.' not in old_s3_key.split('/')[-1]:
+            # This is a folder
+            if not old_s3_key.endswith('/'):
+                old_s3_key += '/'
+                new_s3_key += '/'
+            
+            # Rename folder (move all contents)
+            success = s3_service.move_folder(old_s3_key, new_s3_key)
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to rename folder"
+                )
+        else:
+            # This is a file
+            success = s3_service.move_object(old_s3_key, new_s3_key)
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to rename file"
+                )
+        
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            username=current_user.username,
+            action=ActivityAction.UPLOAD,  # Using existing action
+            resource="file",
+            resource_id=old_path,
+            status=ActivityStatus.SUCCESS,
+            details={"old_path": old_path, "new_name": new_name, "new_path": f"/{new_s3_key}"}
+        )
+        
+        return {
+            "success": True,
+            "old_path": old_path,
+            "new_path": f"/{new_s3_key}",
+            "message": "File renamed successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Rename error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Rename failed"
+        )
+
 @router.get("/debug-user-folders")
 async def debug_user_folders(
     current_user: User = Depends(get_current_user),
@@ -82,27 +371,37 @@ async def list_files(
             
             # Handle directory structure - show only direct children
             if "/" in relative_key:
-                # This is a subdirectory or nested file
-                dir_name = relative_key.split("/")[0]
-                if dir_name in processed_paths:
-                    continue
-                processed_paths.add(dir_name)
+                # Check if this is a direct child or deeper nested item
+                first_slash_index = relative_key.find("/")
+                dir_name = relative_key[:first_slash_index]
+                remaining_path = relative_key[first_slash_index + 1:]
                 
-                # Create folder entry
-                file_resp = {
-                    "id": f"s3_folder:{path.rstrip('/')}/{dir_name}" if path != "/" else f"s3_folder:{dir_name}",
-                    "name": dir_name,
-                    "size": 0,
-                    "type": "folder",
-                    "path": f"{path.rstrip('/')}/{dir_name}" if path != "/" else f"/{dir_name}",
-                    "mime_type": None,
-                    "permissions": "755",
-                    "owner": "admin",
-                    "group": "admin",
-                    "created_at": last_modified.isoformat() if last_modified else None,
-                    "modified_at": last_modified.isoformat() if last_modified else None,
-                    "accessed_at": None
-                }
+                if remaining_path:  # There's more path after the first directory
+                    # This is either a subdirectory or a file in a subdirectory
+                    if dir_name not in processed_paths:
+                        processed_paths.add(dir_name)
+                        # Create folder entry for the subdirectory  
+                        # Use S3 prefix for folder ID, not filesystem path
+                        folder_s3_key = f"{prefix}{dir_name}" if prefix else dir_name
+                        file_resp = {
+                            "id": f"s3_folder:{folder_s3_key}",
+                            "name": dir_name,
+                            "size": 0,
+                            "type": "folder",
+                            "path": f"{path.rstrip('/')}/{dir_name}" if path != "/" else f"/{dir_name}",
+                            "mime_type": None,
+                            "permissions": "755",
+                            "owner": "admin",
+                            "group": "admin",
+                            "created_at": last_modified.isoformat() if last_modified else None,
+                            "modified_at": last_modified.isoformat() if last_modified else None,
+                            "accessed_at": None
+                        }
+                    else:
+                        continue  # Already processed this directory
+                else:
+                    # This is a file directly in the current directory (ending with /)
+                    continue  # Skip directory markers
             else:
                 # This is a file in current directory
                 file_resp = {
@@ -121,6 +420,9 @@ async def list_files(
                 }
             
             file_responses.append(file_resp)
+        
+        # Debug: Log file listing info (console safe)
+        print(f"Files API: Listed {len(file_responses)} items for path '{path}'")
         
         return {
             "data": file_responses,
@@ -353,11 +655,24 @@ async def download_file(
     db: Session = Depends(get_db)
 ):
     """Download a file or folder as zip - S3 only, no database storage"""
+    from urllib.parse import unquote
+    
+    # Debug logging (console safe)
+    decoded_file_id = unquote(file_id)
+    print(f"Download request: {decoded_file_id} by {current_user.username}")
+    
+    # Additional debug for S3 key extraction
+    if decoded_file_id.startswith('s3_file:'):
+        s3_key = decoded_file_id[8:]
+        print(f"Extracted file S3 key: {s3_key}")
+    elif decoded_file_id.startswith('s3_folder:'):
+        s3_prefix = decoded_file_id[10:]
+        print(f"Extracted folder S3 prefix: {s3_prefix}")
     
     # Handle both files and folders
-    if file_id.startswith("s3_file:"):
+    if decoded_file_id.startswith("s3_file:"):
         # Download single file
-        s3_key = file_id[8:]  # Remove "s3_file:" prefix
+        s3_key = decoded_file_id[8:]  # Remove "s3_file:" prefix
         
         # Extract filename from S3 key
         filename = s3_key.split("/")[-1]
@@ -381,7 +696,7 @@ async def download_file(
             username=current_user.username,
             action=ActivityAction.DOWNLOAD,
             resource="file",
-            resource_id=file_id,
+            resource_id=decoded_file_id,
             status=ActivityStatus.SUCCESS,
             details={"filename": filename, "s3_key": s3_key}
         )
@@ -394,12 +709,12 @@ async def download_file(
             }
         )
         
-    elif file_id.startswith("s3_folder:"):
+    elif decoded_file_id.startswith("s3_folder:"):
         # Download folder as zip
         import zipfile
         from io import BytesIO
         
-        s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+        s3_prefix = decoded_file_id[10:]  # Remove "s3_folder:" prefix
         if not s3_prefix.endswith("/"):
             s3_prefix += "/"
         
@@ -429,7 +744,7 @@ async def download_file(
             username=current_user.username,
             action=ActivityAction.DOWNLOAD,
             resource="folder",
-            resource_id=file_id,
+            resource_id=decoded_file_id,
             status=ActivityStatus.SUCCESS,
             details={"folder_name": folder_name, "s3_prefix": s3_prefix}
         )
@@ -444,9 +759,11 @@ async def download_file(
             }
         )
     else:
+        print(f"Invalid file ID format: {decoded_file_id}")
+        print(f"File ID should start with 's3_file:' or 's3_folder:'")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file ID format"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invalid file ID format: {decoded_file_id}"
         )
 
 class DeleteFilesRequest(BaseModel):
@@ -603,6 +920,12 @@ async def rename_file(
     db: Session = Depends(get_db)
 ):
     """Rename a file or folder - S3 only, no database storage"""
+    from urllib.parse import unquote
+    
+    # Decode the file_id in case it's URL encoded
+    decoded_file_id = unquote(file_id)
+    print(f"Rename request - Original: {file_id}, Decoded: {decoded_file_id}")
+    
     new_name = rename_data.get("name")
     
     if not new_name:
@@ -612,11 +935,11 @@ async def rename_file(
         )
     
     # Check if this is a database file (UUID format) or S3-only file
-    if file_id.startswith(("s3_file:", "s3_folder:")):
+    if decoded_file_id.startswith(("s3_file:", "s3_folder:")):
         # This is an S3-only file, extract the S3 key from the ID
-        if file_id.startswith("s3_file:"):
+        if decoded_file_id.startswith("s3_file:"):
             # Extract S3 key directly from the ID
-            old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+            old_s3_key = decoded_file_id[8:]  # Remove "s3_file:" prefix
             
             # Extract current filename and path
             old_filename = old_s3_key.split("/")[-1]

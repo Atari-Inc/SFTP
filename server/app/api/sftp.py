@@ -153,7 +153,7 @@ async def create_sftp_connection(
         )
     
     # Get user's private key
-    if not current_user.ssh_private_key:
+    if not current_user.private_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No SSH private key found for user"
@@ -164,7 +164,7 @@ async def create_sftp_connection(
             host=host,
             port=port,
             username=username,
-            private_key=current_user.ssh_private_key
+            private_key=current_user.private_key
         )
         
         # Log the activity
@@ -386,10 +386,10 @@ async def get_sftp_users(
     """Get SFTP-enabled users"""
     if current_user.role == 'admin':
         # Admin can see all SFTP users
-        users = db.query(User).filter(User.sftp_enabled == True).all()
+        users = db.query(User).filter(User.enable_sftp == True).all()
     else:
         # Regular users can only see themselves
-        users = [current_user] if current_user.sftp_enabled else []
+        users = [current_user] if current_user.enable_sftp else []
     
     result = []
     for user in users:
@@ -400,8 +400,8 @@ async def get_sftp_users(
             'last_login': user.last_login.isoformat() if user.last_login else None,
             'public_key': user.ssh_public_key or 'Not configured',
             'home_directory': f"/home/{user.username}",
-            'permissions': ['read', 'write', 'execute'] if user.sftp_enabled else [],
-            'sftp_enabled': user.sftp_enabled
+            'permissions': ['read', 'write', 'execute'] if user.enable_sftp else [],
+            'sftp_enabled': user.enable_sftp
         })
     
     return {'users': result}

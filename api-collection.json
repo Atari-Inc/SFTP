@@ -1,0 +1,919 @@
+{
+  "info": {
+    "name": "SFTP File Transfer System API",
+    "description": "Complete API collection for the SFTP File Transfer System",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3001/api"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"password\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const responseJson = pm.response.json();",
+                  "    pm.collectionVariables.set('access_token', responseJson.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "Debug Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{access_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/debug-token",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "debug-token"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/users?page=1&limit=10&search=",
+              "host": ["{{base_url}}"],
+              "path": ["users"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"newuser\",\n  \"email\": \"newuser@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"user\",\n  \"enable_sftp\": true,\n  \"home_directory\": \"/home/newuser\",\n  \"ssh_public_key\": \"\",\n  \"private_key\": \"\",\n  \"folder_assignments\": [\n    {\n      \"folder_path\": \"/shared\",\n      \"permission\": \"read\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/users",
+              "host": ["{{base_url}}"],
+              "path": ["users"]
+            }
+          }
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"updateduser\",\n  \"email\": \"updated@example.com\",\n  \"role\": \"admin\",\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Generate SSH Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/users/generate-ssh-key",
+              "host": ["{{base_url}}"],
+              "path": ["users", "generate-ssh-key"]
+            }
+          }
+        },
+        {
+          "name": "Reset SFTP Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"newpassword123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}/sftp-password",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}", "sftp-password"]
+            }
+          }
+        },
+        {
+          "name": "Update SFTP SSH Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ssh_public_key\": \"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC...\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}/sftp-ssh-key",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}", "sftp-ssh-key"]
+            }
+          }
+        },
+        {
+          "name": "Update User Folders",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"folder_path\": \"/shared\",\n    \"permission\": \"read\"\n  },\n  {\n    \"folder_path\": \"/uploads\",\n    \"permission\": \"write\"\n  }\n]"
+            },
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}/folders",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}", "folders"]
+            }
+          }
+        },
+        {
+          "name": "Get User Folders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}/folders",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}", "folders"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Files",
+      "item": [
+        {
+          "name": "Test Files API",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/files/test",
+              "host": ["{{base_url}}"],
+              "path": ["files", "test"]
+            }
+          }
+        },
+        {
+          "name": "List Files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/files?path=/",
+              "host": ["{{base_url}}"],
+              "path": ["files"],
+              "query": [
+                {
+                  "key": "path",
+                  "value": "/"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Upload File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "path",
+                  "value": "/",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/files/upload",
+              "host": ["{{base_url}}"],
+              "path": ["files", "upload"]
+            }
+          }
+        },
+        {
+          "name": "Download File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/files/{{file_id}}/download",
+              "host": ["{{base_url}}"],
+              "path": ["files", "{{file_id}}", "download"]
+            }
+          }
+        },
+        {
+          "name": "Delete Files",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file_ids\": [\"s3_file:example.txt\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/files",
+              "host": ["{{base_url}}"],
+              "path": ["files"]
+            }
+          }
+        },
+        {
+          "name": "Create Folder",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Folder\",\n  \"path\": \"/\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/files/folder",
+              "host": ["{{base_url}}"],
+              "path": ["files", "folder"]
+            }
+          }
+        },
+        {
+          "name": "Rename File",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"renamed-file.txt\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/files/{{file_id}}/rename",
+              "host": ["{{base_url}}"],
+              "path": ["files", "{{file_id}}", "rename"]
+            }
+          }
+        },
+        {
+          "name": "Move Files",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file_ids\": [\"s3_file:example.txt\"],\n  \"target_path\": \"/moved\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/files/move",
+              "host": ["{{base_url}}"],
+              "path": ["files", "move"]
+            }
+          }
+        },
+        {
+          "name": "Copy Files",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file_ids\": [\"s3_file:example.txt\"],\n  \"target_path\": \"/copied\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/files/copy",
+              "host": ["{{base_url}}"],
+              "path": ["files", "copy"]
+            }
+          }
+        },
+        {
+          "name": "Share File",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file_id\": \"s3_file:example.txt\",\n  \"share_with\": [\"user@example.com\"],\n  \"permission\": \"read\",\n  \"expires_in\": 3600\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/files/share",
+              "host": ["{{base_url}}"],
+              "path": ["files", "share"]
+            }
+          }
+        },
+        {
+          "name": "Search Files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/files/search?query=example&path=/",
+              "host": ["{{base_url}}"],
+              "path": ["files", "search"],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "example"
+                },
+                {
+                  "key": "path",
+                  "value": "/"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Storage Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/files/storage-stats?path=/",
+              "host": ["{{base_url}}"],
+              "path": ["files", "storage-stats"],
+              "query": [
+                {
+                  "key": "path",
+                  "value": "/"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Preview File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/files/preview/{{file_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["files", "preview", "{{file_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Operation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operation\": \"delete\",\n  \"file_ids\": [\"s3_file:file1.txt\", \"s3_file:file2.txt\"],\n  \"target_path\": \"/target\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/files/bulk-operation",
+              "host": ["{{base_url}}"],
+              "path": ["files", "bulk-operation"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SFTP",
+      "item": [
+        {
+          "name": "Get SFTP Connection Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/sftp/connection-info",
+              "host": ["{{base_url}}"],
+              "path": ["sftp", "connection-info"]
+            }
+          }
+        },
+        {
+          "name": "Test SFTP Connection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"host\": \"localhost\",\n  \"port\": 22,\n  \"username\": \"testuser\",\n  \"private_key\": \"-----BEGIN OPENSSH PRIVATE KEY-----...\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/sftp/test-connection",
+              "host": ["{{base_url}}"],
+              "path": ["sftp", "test-connection"]
+            }
+          }
+        },
+        {
+          "name": "List SFTP Files",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"path\": \"/\",\n  \"host\": \"localhost\",\n  \"port\": 22,\n  \"username\": \"testuser\",\n  \"private_key\": \"-----BEGIN OPENSSH PRIVATE KEY-----...\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/sftp/list-files",
+              "host": ["{{base_url}}"],
+              "path": ["sftp", "list-files"]
+            }
+          }
+        },
+        {
+          "name": "Download SFTP File",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"remote_path\": \"/remote/file.txt\",\n  \"host\": \"localhost\",\n  \"port\": 22,\n  \"username\": \"testuser\",\n  \"private_key\": \"-----BEGIN OPENSSH PRIVATE KEY-----...\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/sftp/download",
+              "host": ["{{base_url}}"],
+              "path": ["sftp", "download"]
+            }
+          }
+        },
+        {
+          "name": "Upload SFTP File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "remote_path",
+                  "value": "/remote/uploaded-file.txt",
+                  "type": "text"
+                },
+                {
+                  "key": "host",
+                  "value": "localhost",
+                  "type": "text"
+                },
+                {
+                  "key": "port",
+                  "value": "22",
+                  "type": "text"
+                },
+                {
+                  "key": "username",
+                  "value": "testuser",
+                  "type": "text"
+                },
+                {
+                  "key": "private_key",
+                  "value": "-----BEGIN OPENSSH PRIVATE KEY-----...",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/sftp/upload",
+              "host": ["{{base_url}}"],
+              "path": ["sftp", "upload"]
+            }
+          }
+        },
+        {
+          "name": "List SFTP Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/sftp/users",
+              "host": ["{{base_url}}"],
+              "path": ["sftp", "users"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Activity Logs",
+      "item": [
+        {
+          "name": "Get Activity Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/activity/?page=1&limit=20&search=&action=&status=&user_id=",
+              "host": ["{{base_url}}"],
+              "path": ["activity", ""],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "action",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                },
+                {
+                  "key": "start_date",
+                  "value": "2025-01-01",
+                  "disabled": true
+                },
+                {
+                  "key": "end_date",
+                  "value": "2025-12-31",
+                  "disabled": true
+                },
+                {
+                  "key": "user_id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Activity Log by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/activity/{{log_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["activity", "{{log_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Export Activity Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/activity/export?format=csv&start_date=2025-01-01&end_date=2025-12-31",
+              "host": ["{{base_url}}"],
+              "path": ["activity", "export"],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "csv"
+                },
+                {
+                  "key": "start_date",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "end_date",
+                  "value": "2025-12-31"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Statistics",
+      "item": [
+        {
+          "name": "Get Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stats/dashboard",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Get Storage Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stats/storage",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "storage"]
+            }
+          }
+        },
+        {
+          "name": "Get User Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stats/users",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "users"]
+            }
+          }
+        },
+        {
+          "name": "Get Activity Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stats/activity?period=7d",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "activity"],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "7d"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Folders",
+      "item": [
+        {
+          "name": "List S3 Folders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/folders",
+              "host": ["{{base_url}}"],
+              "path": ["folders"]
+            }
+          }
+        },
+        {
+          "name": "Get Bucket Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/folders/bucket-info",
+              "host": ["{{base_url}}"],
+              "path": ["folders", "bucket-info"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/health",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Root Endpoint",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": [""]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
