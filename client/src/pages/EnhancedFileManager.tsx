@@ -29,18 +29,14 @@ import {
   XCircle,
   AlertCircle,
   Info,
-  Table,
-  Scissors,
   Clipboard,
   X,
-  Link,
   Filter,
   HardDrive,
   Cloud,
   Clock
 } from 'lucide-react'
 import { useFiles } from '@/contexts/FileContext'
-import { useAuth } from '@/contexts/AuthContext'
 import { formatBytes, formatDate } from '@/utils'
 
 // Utility function to get file type from file name
@@ -135,7 +131,6 @@ const EnhancedFileManager: React.FC = () => {
     clearClipboard,
   } = useFiles()
 
-  const { user } = useAuth()
 
   // Modal states
   const [showUploadModal, setShowUploadModal] = useState(false)
