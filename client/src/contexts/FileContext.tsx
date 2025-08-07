@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useReducer, ReactNode } from 'react'
+import React, { createContext, useContext, useReducer, ReactNode, useEffect } from 'react'
 import { fileAPI } from '@/services/api'
 import toast from 'react-hot-toast'
+import { useAuth } from './AuthContext'
 
 interface FileItem {
   id: string
@@ -29,6 +30,7 @@ interface FileState {
   operations: FileOperation[]
   isLoading: boolean
   error: string | null
+  clipboard: { operation: 'cut' | 'copy' | null; fileIds: string[] }
 }
 
 type FileAction =
@@ -43,6 +45,8 @@ type FileAction =
   | { type: 'ADD_OPERATION'; payload: FileOperation }
   | { type: 'UPDATE_OPERATION'; payload: { id: string; updates: Partial<FileOperation> } }
   | { type: 'REMOVE_OPERATION'; payload: string }
+  | { type: 'SET_CLIPBOARD'; payload: { operation: 'cut' | 'copy' | null; fileIds: string[] } }
+  | { type: 'CLEAR_CLIPBOARD'; payload: void }
 
 const initialState: FileState = {
   currentPath: '/',
@@ -51,6 +55,7 @@ const initialState: FileState = {
   operations: [],
   isLoading: false,
   error: null,
+  clipboard: { operation: null, fileIds: [] },
 }
 
 const fileReducer = (state: FileState, action: FileAction): FileState => {
@@ -85,6 +90,10 @@ const fileReducer = (state: FileState, action: FileAction): FileState => {
       }
     case 'REMOVE_OPERATION':
       return { ...state, operations: state.operations.filter(op => op.id !== action.payload) }
+    case 'SET_CLIPBOARD':
+      return { ...state, clipboard: action.payload }
+    case 'CLEAR_CLIPBOARD':
+      return { ...state, clipboard: { operation: null, fileIds: [] } }
     default:
       return state
   }
@@ -100,6 +109,18 @@ interface FileContextType extends FileState {
   clearSelection: () => void
   createFolder: (name: string) => Promise<void>
   clearCompletedOperations: () => void
+  moveFiles: (fileIds: string[], targetPath: string) => Promise<void>
+  copyFiles: (fileIds: string[], targetPath: string) => Promise<void>
+  renameFile: (fileId: string, newName: string) => Promise<void>
+  shareFile: (fileId: string, shareWith: string[], permission?: string) => Promise<string>
+  searchFiles: (query: string) => Promise<FileItem[]>
+  previewFile: (fileId: string) => Promise<any>
+  bulkOperation: (operation: string, fileIds: string[], targetPath?: string) => Promise<void>
+  clipboard: { operation: 'cut' | 'copy' | null; fileIds: string[] }
+  cutFiles: (fileIds: string[]) => void
+  copyFilesToClipboard: (fileIds: string[]) => void
+  pasteFiles: (targetPath?: string) => Promise<void>
+  clearClipboard: () => void
 }
 
 const FileContext = createContext<FileContextType | undefined>(undefined)
@@ -118,6 +139,13 @@ interface FileProviderProps {
 
 export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
   const [state, dispatch] = useReducer(fileReducer, initialState)
+  const { isAuthenticated } = useAuth()
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadFiles()
+    }
+  }, [isAuthenticated])
 
   const loadFiles = async (path: string = state.currentPath) => {
     dispatch({ type: 'SET_LOADING', payload: true })
@@ -262,11 +290,18 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
 
   const deleteFiles = async (fileIds: string[]) => {
     try {
-      await fileAPI.deleteFiles(fileIds)
-      fileIds.forEach(id => {
-        dispatch({ type: 'REMOVE_FILE', payload: id })
+      const response = await fileAPI.deleteFiles({ 
+        file_ids: fileIds, 
+        current_path: state.currentPath 
       })
-      toast.success(`${fileIds.length} file(s) deleted successfully`)
+      if (response.data.success) {
+        fileIds.forEach(id => {
+          dispatch({ type: 'REMOVE_FILE', payload: id })
+        })
+        toast.success(`${response.data.deleted_count} file(s) deleted successfully`)
+      } else {
+        toast.error(`Delete failed: ${response.data.errors.join(', ')}`)
+      }
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || 'Delete failed'
       toast.error(errorMessage)
@@ -302,6 +337,154 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     })
   }
 
+  const moveFiles = async (fileIds: string[], targetPath: string) => {
+    try {
+      const response = await fileAPI.moveFiles({ 
+        file_ids: fileIds, 
+        target_path: targetPath, 
+        current_path: state.currentPath 
+      })
+      if (response.data.success) {
+        toast.success(`${response.data.moved_count} file(s) moved successfully`)
+        await loadFiles()
+        clearSelection()
+      } else {
+        toast.error(`Move failed: ${response.data.errors.join(', ')}`)
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Failed to move files'
+      toast.error(errorMessage)
+    }
+  }
+
+  const copyFiles = async (fileIds: string[], targetPath: string) => {
+    try {
+      const response = await fileAPI.copyFiles({ 
+        file_ids: fileIds, 
+        target_path: targetPath, 
+        current_path: state.currentPath 
+      })
+      if (response.data.success) {
+        toast.success(`${response.data.copied_count} file(s) copied successfully`)
+        await loadFiles()
+        clearSelection()
+      } else {
+        toast.error(`Copy failed: ${response.data.errors.join(', ')}`)
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Failed to copy files'
+      toast.error(errorMessage)
+    }
+  }
+
+  const renameFile = async (fileId: string, newName: string) => {
+    try {
+      const response = await fileAPI.renameFile(fileId, newName)
+      dispatch({ type: 'UPDATE_FILE', payload: response.data })
+      toast.success(`File renamed successfully`)
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Failed to rename file'
+      toast.error(errorMessage)
+    }
+  }
+
+  const shareFile = async (fileId: string, shareWith: string[], permission: string = 'read'): Promise<string> => {
+    try {
+      const response = await fileAPI.shareFile({ 
+        file_id: fileId, 
+        share_with: shareWith, 
+        permission,
+        expires_in: 3600 
+      })
+      toast.success(`File shared successfully`)
+      return response.data.share_url
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Failed to share file'
+      toast.error(errorMessage)
+      throw error
+    }
+  }
+
+  const searchFiles = async (query: string): Promise<FileItem[]> => {
+    try {
+      const response = await fileAPI.searchFiles(query, state.currentPath)
+      return response.data.results
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Search failed'
+      toast.error(errorMessage)
+      return []
+    }
+  }
+
+  const previewFile = async (fileId: string) => {
+    try {
+      const response = await fileAPI.previewFile(fileId)
+      return response.data
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || 'Failed to get file preview'
+      toast.error(errorMessage)
+      throw error
+    }
+  }
+
+  const bulkOperation = async (operation: string, fileIds: string[], targetPath?: string) => {
+    try {
+      const response = await fileAPI.bulkOperation({ 
+        operation, 
+        file_ids: fileIds, 
+        target_path: targetPath 
+      })
+      
+      if (response.data.success !== false) {
+        toast.success(`Bulk ${operation} completed successfully`)
+        await loadFiles()
+        clearSelection()
+      } else {
+        toast.error(`Bulk ${operation} failed`)
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || `Bulk ${operation} failed`
+      toast.error(errorMessage)
+    }
+  }
+
+  const cutFiles = (fileIds: string[]) => {
+    dispatch({ type: 'SET_CLIPBOARD', payload: { operation: 'cut', fileIds } })
+    toast.success(`${fileIds.length} file(s) cut to clipboard`)
+  }
+
+  const copyFilesToClipboard = (fileIds: string[]) => {
+    dispatch({ type: 'SET_CLIPBOARD', payload: { operation: 'copy', fileIds } })
+    toast.success(`${fileIds.length} file(s) copied to clipboard`)
+  }
+
+  const pasteFiles = async (targetPath?: string) => {
+    const { operation, fileIds } = state.clipboard
+    if (!operation || fileIds.length === 0) {
+      toast.error('Nothing to paste')
+      return
+    }
+
+    const destination = targetPath || state.currentPath
+
+    try {
+      if (operation === 'cut') {
+        await moveFiles(fileIds, destination)
+      } else if (operation === 'copy') {
+        await copyFiles(fileIds, destination)
+      }
+      
+      // Clear clipboard after successful paste
+      clearClipboard()
+    } catch (error) {
+      // Error handling is done in moveFiles/copyFiles
+    }
+  }
+
+  const clearClipboard = () => {
+    dispatch({ type: 'CLEAR_CLIPBOARD', payload: undefined })
+  }
+
   const contextValue: FileContextType = {
     ...state,
     loadFiles,
@@ -313,6 +496,17 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     clearSelection,
     createFolder,
     clearCompletedOperations,
+    moveFiles,
+    copyFiles,
+    renameFile,
+    shareFile,
+    searchFiles,
+    previewFile,
+    bulkOperation,
+    cutFiles,
+    copyFilesToClipboard,
+    pasteFiles,
+    clearClipboard,
   }
 
   return (

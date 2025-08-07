@@ -18,20 +18,12 @@ import {
   Code,
   File,
   Folder,
-  FolderOpen,
   MoreVertical,
   Share2,
   Copy,
   Move,
   Edit2,
   Eye,
-  Lock,
-  Unlock,
-  Star,
-  Clock,
-  HardDrive,
-  Cloud,
-  Filter,
   CheckCircle,
   XCircle,
   AlertCircle,
@@ -40,11 +32,15 @@ import {
   Scissors,
   Clipboard,
   X,
-  Link
+  Link,
+  Filter,
+  HardDrive,
+  Cloud,
+  Clock
 } from 'lucide-react'
 import { useFiles } from '@/contexts/FileContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { formatBytes, formatDate, getFileIcon } from '@/utils'
+import { formatBytes, formatDate } from '@/utils'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -59,18 +55,10 @@ interface FileItemType {
   created_at: string
   modified_at: string
   owner: string
-  mimeType?: string
-  isStarred?: boolean
-  permissions?: {
-    read: boolean
-    write: boolean
-    delete: boolean
-  }
-  sharedWith?: string[]
-  version?: number
+  mime_type?: string
 }
 
-const FileManager: React.FC = () => {
+const EnhancedFileManager: React.FC = () => {
   const {
     files,
     currentPath,
@@ -102,6 +90,7 @@ const FileManager: React.FC = () => {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
 
+  // Modal states
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
@@ -109,98 +98,33 @@ const FileManager: React.FC = () => {
   const [showRenameModal, setShowRenameModal] = useState(false)
   const [showMoveModal, setShowMoveModal] = useState(false)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
+
+  // Form states
   const [selectedFile, setSelectedFile] = useState<FileItemType | null>(null)
   const [newFolderName, setNewFolderName] = useState('')
   const [renameValue, setRenameValue] = useState('')
   const [shareEmails, setShareEmails] = useState('')
   const [moveTargetPath, setMoveTargetPath] = useState('')
   const [previewData, setPreviewData] = useState<any>(null)
-  const [searchResults, setSearchResults] = useState<FileItemType[]>([])
-  const [isSearching, setIsSearching] = useState(false)
+
+  // UI states
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<FileItemType[]>([])
+  const [isSearching, setIsSearching] = useState(false)
   const [dragActive, setDragActive] = useState(false)
   const [sortBy, setSortBy] = useState<'name' | 'size' | 'date'>('name')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [showFilters, setShowFilters] = useState(false)
   const [filterType, setFilterType] = useState<'all' | 'folder' | 'image' | 'document' | 'video' | 'audio'>('all')
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
+  
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     loadFiles()
   }, [])
-
-  // Test API endpoint directly
-  const testAPIEndpoint = async () => {
-    try {
-      console.log('Testing API endpoint directly...')
-      const response = await fetch('/api/files?path=/', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      })
-      
-      console.log('API Response Status:', response.status)
-      console.log('API Response Headers:', response.headers)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('API Error Response:', errorText)
-        toast.error(`API Error: ${response.status} - ${errorText}`)
-        return
-      }
-      
-      const data = await response.json()
-      console.log('Raw API Response:', data)
-      toast.success('API test successful - check console for details')
-    } catch (error) {
-      console.error('API Test Error:', error)
-      toast.error(`API Test Failed: ${error}`)
-    }
-  }
-
-  // Test function to add sample files for debugging
-  const addTestFiles = () => {
-    const testFiles = [
-      {
-        id: '1',
-        name: 'Documents',
-        size: 0,
-        type: 'folder' as const,
-        path: '/Documents',
-        created_at: new Date().toISOString(),
-        modified_at: new Date().toISOString(),
-        owner: 'admin'
-      },
-      {
-        id: '2', 
-        name: 'sample.pdf',
-        size: 1024000,
-        type: 'file' as const,
-        path: '/sample.pdf',
-        created_at: new Date().toISOString(),
-        modified_at: new Date().toISOString(),
-        owner: 'admin'
-      },
-      {
-        id: '3',
-        name: 'image.jpg',
-        size: 2048000,
-        type: 'file' as const,
-        path: '/image.jpg', 
-        created_at: new Date().toISOString(),
-        modified_at: new Date().toISOString(),
-        owner: 'admin'
-      }
-    ]
-    
-    // Simulate setting test files (this would normally come from the API)
-    console.log('Adding test files:', testFiles)
-    toast.success('Test files added for debugging')
-  }
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -212,6 +136,7 @@ const FileManager: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  // Event handlers
   const handleFileSelect = (fileId: string, isCtrlClick: boolean) => {
     if (isCtrlClick) {
       const newSelection = selectedFiles.includes(fileId)
@@ -223,11 +148,11 @@ const FileManager: React.FC = () => {
     }
   }
 
-  const handleFileDoubleClick = (file: any) => {
+  const handleFileDoubleClick = (file: FileItemType) => {
     if (file.type === 'folder') {
       navigateToPath(file.path)
     } else {
-      handlePreview(file)
+      handlePreviewFile(file)
     }
   }
 
@@ -242,7 +167,6 @@ const FileManager: React.FC = () => {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragActive(false)
-    
     const files = e.dataTransfer.files
     if (files.length > 0) {
       uploadFiles(files)
@@ -282,9 +206,51 @@ const FileManager: React.FC = () => {
     }
   }
 
-  const handlePreview = (file: FileItemType) => {
+  // New enhanced handlers
+  const handleCutFiles = () => {
+    if (selectedFiles.length > 0) {
+      cutFiles(selectedFiles)
+    }
+  }
+
+  const handleCopyFiles = () => {
+    if (selectedFiles.length > 0) {
+      copyFilesToClipboard(selectedFiles)
+    }
+  }
+
+  const handlePasteFiles = async () => {
+    await pasteFiles(currentPath)
+  }
+
+  const handleRename = (file: FileItemType) => {
     setSelectedFile(file)
-    setShowDetailsModal(true)
+    setRenameValue(file.name)
+    setShowRenameModal(true)
+  }
+
+  const handleRenameSubmit = async () => {
+    if (selectedFile && renameValue.trim()) {
+      await renameFile(selectedFile.id, renameValue.trim())
+      setShowRenameModal(false)
+      setRenameValue('')
+      setSelectedFile(null)
+    }
+  }
+
+  const handleMove = () => {
+    if (selectedFiles.length > 0) {
+      setMoveTargetPath(currentPath)
+      setShowMoveModal(true)
+    }
+  }
+
+  const handleMoveSubmit = async () => {
+    if (selectedFiles.length > 0 && moveTargetPath) {
+      await moveFiles(selectedFiles, moveTargetPath)
+      setShowMoveModal(false)
+      setMoveTargetPath('')
+    }
   }
 
   const handleShare = (file: FileItemType) => {
@@ -292,9 +258,64 @@ const FileManager: React.FC = () => {
     setShowShareModal(true)
   }
 
+  const handleShareSubmit = async () => {
+    if (selectedFile && shareEmails.trim()) {
+      try {
+        const emails = shareEmails.split(',').map(email => email.trim()).filter(Boolean)
+        const shareUrl = await shareFile(selectedFile.id, emails)
+        
+        navigator.clipboard.writeText(shareUrl)
+        toast.success('Share URL copied to clipboard!')
+        
+        setShowShareModal(false)
+        setShareEmails('')
+        setSelectedFile(null)
+      } catch (error) {
+        // Error handled in shareFile function
+      }
+    }
+  }
+
+  const handlePreviewFile = async (file: FileItemType) => {
+    try {
+      const data = await previewFile(file.id)
+      setPreviewData(data)
+      setSelectedFile(file)
+      setShowPreviewModal(true)
+    } catch (error) {
+      setSelectedFile(file)
+      setShowDetailsModal(true)
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults([])
+      setIsSearching(false)
+      return
+    }
+
+    setIsSearching(true)
+    try {
+      const results = await searchFiles(searchQuery.trim())
+      setSearchResults(results)
+    } catch (error) {
+      setSearchResults([])
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  const clearSearch = () => {
+    setSearchQuery('')
+    setSearchResults([])
+    setIsSearching(false)
+  }
+
+  // Utility functions
   const getFileTypeIcon = (file: FileItemType) => {
     if (file.type === 'folder') {
-      return <Folder className="h-5 w-5" />
+      return <Folder className="h-5 w-5 text-blue-600" />
     }
     
     const ext = file.name.split('.').pop()?.toLowerCase()
@@ -325,10 +346,6 @@ const FileManager: React.FC = () => {
       case 'java':
       case 'cpp':
         return <Code className="h-5 w-5 text-blue-600" />
-      case 'xlsx':
-      case 'xls':
-      case 'csv':
-        return <Table className="h-5 w-5 text-green-700" />
       case 'pdf':
       case 'doc':
       case 'docx':
@@ -391,25 +408,10 @@ const FileManager: React.FC = () => {
     return filtered
   }
 
-  // Filter files based on user permissions
-  const getUserAccessibleFiles = (files: FileItemType[]) => {
-    if (isAdmin) {
-      return files // Admins see all files
-    }
-    
-    // For regular users, filter based on their folder assignments
-    // This would need to be implemented based on your backend logic
-    return files.filter(file => {
-      // Check if user has access to this file/folder
-      // You'll need to get user's folder_assignments from the backend
-      return true // Placeholder - implement actual permission check
-    })
-  }
-
   const pathSegments = currentPath.split('/').filter(Boolean)
-  const processedFiles = sortFiles(filterFiles(getUserAccessibleFiles(files || [])))
+  const displayFiles = searchQuery && searchResults.length >= 0 ? searchResults : files || []
+  const processedFiles = sortFiles(filterFiles(displayFiles))
 
-  // Calculate storage stats
   const totalSize = files?.reduce((acc, file) => acc + (file.size || 0), 0) || 0
   const fileCount = files?.filter(f => f.type === 'file').length || 0
   const folderCount = files?.filter(f => f.type === 'folder').length || 0
@@ -420,9 +422,9 @@ const FileManager: React.FC = () => {
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-6 text-white">
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-3xl font-bold mb-2">File Manager</h1>
+            <h1 className="text-3xl font-bold mb-2">Enhanced File Manager</h1>
             <p className="text-blue-100">
-              {isAdmin ? 'Admin Access - All Files' : 'Your Files and Folders'}
+              Complete AWS S3 File Management with Cut, Copy, Paste, Share & More
             </p>
           </div>
           <div className="flex items-center space-x-4">
@@ -507,6 +509,27 @@ const FileManager: React.FC = () => {
                   <Download className="h-4 w-4 mr-2" />
                   Download ({selectedFiles.length})
                 </Button>
+                <Button onClick={handleCutFiles} variant="outline" size="sm">
+                  <Scissors className="h-4 w-4 mr-2" />
+                  Cut ({selectedFiles.length})
+                </Button>
+                <Button onClick={handleCopyFiles} variant="outline" size="sm">
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copy ({selectedFiles.length})
+                </Button>
+                <Button onClick={handleMove} variant="outline" size="sm">
+                  <Move className="h-4 w-4 mr-2" />
+                  Move ({selectedFiles.length})
+                </Button>
+                <Button 
+                  onClick={() => handleShare(files.find(f => f.id === selectedFiles[0])!)} 
+                  variant="outline" 
+                  size="sm" 
+                  disabled={selectedFiles.length !== 1}
+                >
+                  <Share2 className="h-4 w-4 mr-2" />
+                  Share
+                </Button>
                 <Button onClick={handleDeleteSelected} variant="danger" size="sm">
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete ({selectedFiles.length})
@@ -520,6 +543,22 @@ const FileManager: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Clipboard indicator */}
+            {clipboard.operation && clipboard.fileIds.length > 0 && (
+              <div className="flex items-center bg-blue-50 border border-blue-200 rounded-lg px-3 py-1 text-sm mr-2">
+                <Clipboard className="h-4 w-4 mr-2 text-blue-600" />
+                <span className="text-blue-700">
+                  {clipboard.fileIds.length} file(s) {clipboard.operation === 'cut' ? 'cut' : 'copied'}
+                </span>
+                <Button onClick={handlePasteFiles} variant="outline" size="sm" className="ml-2">
+                  Paste Here
+                </Button>
+                <Button onClick={clearClipboard} variant="outline" size="sm" className="ml-1">
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
+            
             {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -528,9 +567,22 @@ const FileManager: React.FC = () => {
                 placeholder="Search files..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                 className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
               />
+              {searchQuery && (
+                <button
+                  onClick={clearSearch}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
+            
+            <Button onClick={handleSearch} variant="outline" size="sm" disabled={!searchQuery.trim() || isSearching}>
+              {isSearching ? 'Searching...' : 'Search'}
+            </Button>
 
             {/* Filter */}
             <Button
@@ -615,54 +667,55 @@ const FileManager: React.FC = () => {
             <AlertCircle className="h-16 w-16 mb-4 text-red-300" />
             <p className="text-lg font-medium">Failed to load files</p>
             <p className="text-sm mt-1">{error}</p>
-            <Button
-              onClick={() => loadFiles()}
-              variant="outline"
-              className="mt-4"
-            >
+            <Button onClick={() => loadFiles()} variant="outline" className="mt-4">
               <RefreshCw className="h-4 w-4 mr-2" />
               Try Again
             </Button>
+          </div>
+        ) : isSearching ? (
+          <div className="flex items-center justify-center h-96">
+            <LoadingSpinner size="lg" />
+            <p className="ml-4 text-gray-500">Searching files...</p>
+          </div>
+        ) : searchQuery && searchResults.length >= 0 ? (
+          <div className="p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-medium">Search Results for "{searchQuery}"</h3>
+              <Button onClick={clearSearch} variant="outline" size="sm">
+                <X className="h-4 w-4 mr-2" />
+                Clear Search
+              </Button>
+            </div>
+            {searchResults.length === 0 ? (
+              <p className="text-gray-500 text-center py-8">No files found matching your search.</p>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {searchResults.map((file) => (
+                  <div
+                    key={file.id}
+                    className="group relative flex flex-col items-center p-4 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md border-gray-200 hover:border-gray-300"
+                    onClick={(e) => handleFileSelect(file.id, e.ctrlKey || e.metaKey)}
+                    onDoubleClick={() => file.type === 'folder' ? navigateToPath(file.path) : handlePreviewFile(file)}
+                  >
+                    <div className="text-4xl mb-2">
+                      {getFileTypeIcon(file)}
+                    </div>
+                    <p className="text-sm font-medium text-center truncate w-full" title={file.name}>
+                      {file.name}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      in {file.path}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : processedFiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-96 text-gray-500">
             <Folder className="h-16 w-16 mb-4 text-gray-300" />
             <p className="text-lg font-medium">No files found</p>
             <p className="text-sm mt-1">Upload files or create folders to get started</p>
-            <div className="mt-4 text-xs text-gray-400 space-y-1">
-              <p>Debug Info:</p>
-              <p>Current Path: {currentPath}</p>
-              <p>User Role: {isAdmin ? 'Admin' : 'User'}</p>
-              <p>Files Array Length: {files?.length || 0}</p>
-              <p>API Response: Check browser console for details</p>
-            </div>
-            <div className="flex flex-wrap gap-2 mt-4">
-              <Button
-                onClick={() => loadFiles()}
-                variant="outline"
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh Files
-              </Button>
-              {isAdmin && (
-                <>
-                  <Button
-                    onClick={testAPIEndpoint}
-                    variant="outline"
-                  >
-                    <AlertCircle className="h-4 w-4 mr-2" />
-                    Test API
-                  </Button>
-                  <Button
-                    onClick={addTestFiles}
-                    variant="outline"
-                  >
-                    <Info className="h-4 w-4 mr-2" />
-                    Add Test Files
-                  </Button>
-                </>
-              )}
-            </div>
           </div>
         ) : viewMode === 'grid' ? (
           /* Grid View */
@@ -695,13 +748,46 @@ const FileManager: React.FC = () => {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            handlePreview(file)
+                            handlePreviewFile(file)
                             setActiveDropdown(null)
                           }}
                           className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
                         >
                           <Eye className="h-4 w-4 mr-3" />
-                          View Details
+                          Preview
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRename(file)
+                            setActiveDropdown(null)
+                          }}
+                          className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                        >
+                          <Edit2 className="h-4 w-4 mr-3" />
+                          Rename
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            cutFiles([file.id])
+                            setActiveDropdown(null)
+                          }}
+                          className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                        >
+                          <Scissors className="h-4 w-4 mr-3" />
+                          Cut
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            copyFilesToClipboard([file.id])
+                            setActiveDropdown(null)
+                          }}
+                          className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                        >
+                          <Copy className="h-4 w-4 mr-3" />
+                          Copy
                         </button>
                         <button
                           onClick={(e) => {
@@ -828,19 +914,17 @@ const FileManager: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end space-x-2">
-                        <Button
-                          onClick={() => handlePreview(file)}
-                          variant="outline"
-                          size="sm"
-                        >
+                        <Button onClick={() => handlePreviewFile(file)} variant="outline" size="sm">
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button
-                          onClick={() => downloadFile(file.id)}
-                          variant="outline"
-                          size="sm"
-                        >
+                        <Button onClick={() => handleRename(file)} variant="outline" size="sm">
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button onClick={() => downloadFile(file.id)} variant="outline" size="sm">
                           <Download className="h-4 w-4" />
+                        </Button>
+                        <Button onClick={() => handleShare(file)} variant="outline" size="sm">
+                          <Share2 className="h-4 w-4" />
                         </Button>
                         <Button
                           onClick={() => {
@@ -877,12 +961,6 @@ const FileManager: React.FC = () => {
         <div className="fixed bottom-4 right-4 w-96 bg-white rounded-lg shadow-xl border p-4 max-h-64 overflow-y-auto">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium">File Operations</h3>
-            <button
-              onClick={() => {/* Clear completed operations */}}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Clear completed
-            </button>
           </div>
           {operations.map((op) => (
             <div key={op.id} className="mb-3">
@@ -968,6 +1046,175 @@ const FileManager: React.FC = () => {
       </Modal>
 
       <Modal
+        isOpen={showRenameModal}
+        onClose={() => setShowRenameModal(false)}
+        title="Rename File"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              New Name
+            </label>
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder="Enter new name"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => setShowRenameModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRenameSubmit} disabled={!renameValue.trim()}>
+              Rename
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showMoveModal}
+        onClose={() => setShowMoveModal(false)}
+        title="Move Files"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Target Path
+            </label>
+            <input
+              type="text"
+              value={moveTargetPath}
+              onChange={(e) => setMoveTargetPath(e.target.value)}
+              placeholder="Enter target path (e.g., /Documents)"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => setShowMoveModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleMoveSubmit} disabled={!moveTargetPath.trim()}>
+              Move Files
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        title="Share File"
+      >
+        {selectedFile && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Share "{selectedFile.name}" with other users
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Enter emails (comma-separated)
+              </label>
+              <input
+                type="text"
+                value={shareEmails}
+                onChange={(e) => setShareEmails(e.target.value)}
+                placeholder="user@example.com, another@example.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div className="flex justify-end space-x-2">
+              <Button variant="outline" onClick={() => setShowShareModal(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleShareSubmit} disabled={!shareEmails.trim()}>
+                <Share2 className="h-4 w-4 mr-2" />
+                Generate Share Link
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={showPreviewModal}
+        onClose={() => setShowPreviewModal(false)}
+        title="File Preview"
+        size="lg"
+      >
+        {selectedFile && previewData && (
+          <div className="space-y-4">
+            <div className="flex items-center space-x-4">
+              <div className="text-4xl">{getFileTypeIcon(selectedFile)}</div>
+              <div>
+                <h3 className="text-lg font-medium">{selectedFile.name}</h3>
+                <p className="text-sm text-gray-500">{formatBytes(selectedFile.size)}</p>
+              </div>
+            </div>
+            
+            {previewData.can_preview && (
+              <div className="mt-4 p-4 border rounded-lg">
+                {previewData.mime_type?.startsWith('image/') && (
+                  <img 
+                    src={previewData.preview_url} 
+                    alt={selectedFile.name}
+                    className="max-w-full max-h-96 mx-auto rounded"
+                  />
+                )}
+                {previewData.mime_type?.startsWith('text/') && (
+                  <iframe 
+                    src={previewData.preview_url}
+                    className="w-full h-96 border-0"
+                    title={selectedFile.name}
+                  />
+                )}
+                {previewData.mime_type === 'application/pdf' && (
+                  <iframe 
+                    src={previewData.preview_url}
+                    className="w-full h-96 border-0"
+                    title={selectedFile.name}
+                  />
+                )}
+              </div>
+            )}
+            
+            <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+              <div>
+                <p className="text-xs text-gray-500 uppercase">Created</p>
+                <p className="text-sm">{formatDate(selectedFile.created_at)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase">Modified</p>
+                <p className="text-sm">{formatDate(selectedFile.modified_at)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase">Owner</p>
+                <p className="text-sm">{selectedFile.owner}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase">Type</p>
+                <p className="text-sm">{previewData.mime_type || 'Unknown'}</p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end space-x-2 pt-4 border-t">
+              <Button variant="outline" onClick={() => setShowPreviewModal(false)}>
+                Close
+              </Button>
+              <Button onClick={() => downloadFile(selectedFile.id)}>
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         isOpen={showDetailsModal}
         onClose={() => setShowDetailsModal(false)}
         title="File Details"
@@ -1006,46 +1253,12 @@ const FileManager: React.FC = () => {
               <Button variant="outline" onClick={() => setShowDetailsModal(false)}>
                 Close
               </Button>
-              <Button onClick={() => {
-                downloadFile(selectedFile.id)
-                setShowDetailsModal(false)
-              }}>
-                <Download className="h-4 w-4 mr-2" />
-                Download
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <Modal
-        isOpen={showShareModal}
-        onClose={() => setShowShareModal(false)}
-        title="Share File"
-      >
-        {selectedFile && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">
-              Share "{selectedFile.name}" with other users
-            </p>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Enter email or username
-              </label>
-              <input
-                type="text"
-                placeholder="user@example.com"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-            <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setShowShareModal(false)}>
-                Cancel
-              </Button>
-              <Button>
-                <Share2 className="h-4 w-4 mr-2" />
-                Share
-              </Button>
+              {selectedFile.type === 'file' && (
+                <Button onClick={() => downloadFile(selectedFile.id)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -1054,4 +1267,4 @@ const FileManager: React.FC = () => {
   )
 }
 
-export default FileManager
+export default EnhancedFileManager

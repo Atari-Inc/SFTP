@@ -2,16 +2,7 @@ import React, { createContext, useContext, useReducer, ReactNode, useEffect } fr
 import { authAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
-interface User {
-  id: string
-  username: string
-  email: string
-  role: 'admin' | 'user'
-  is_active: boolean
-  last_login?: string
-  created_at: string
-  updated_at: string
-}
+import { User } from '@/types'
 
 interface AuthState {
   user: User | null

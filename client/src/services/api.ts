@@ -96,17 +96,35 @@ export const fileAPI = {
   downloadFile: (fileId: string) =>
     apiClient.get(`/files/${fileId}/download`, { responseType: 'blob' }),
   
-  deleteFiles: (fileIds: string[]) =>
-    apiClient.delete('/files', { data: { fileIds } }),
+  deleteFiles: (data: { file_ids: string[]; current_path?: string }) =>
+    apiClient.delete('/files', { data }),
   
   createFolder: (data: { name: string; path: string }) =>
     apiClient.post('/files/folder', data),
   
-  moveFiles: (data: { fileIds: string[]; targetPath: string }) =>
+  moveFiles: (data: { file_ids: string[]; target_path: string; current_path?: string }) =>
     apiClient.put('/files/move', data),
+  
+  copyFiles: (data: { file_ids: string[]; target_path: string; current_path?: string }) =>
+    apiClient.post('/files/copy', data),
   
   renameFile: (fileId: string, newName: string) =>
     apiClient.put(`/files/${fileId}/rename`, { name: newName }),
+  
+  shareFile: (data: { file_id: string; share_with: string[]; permission?: string; expires_in?: number }) =>
+    apiClient.post('/files/share', data),
+  
+  bulkOperation: (data: { operation: string; file_ids: string[]; target_path?: string }) =>
+    apiClient.post('/files/bulk-operation', data),
+  
+  searchFiles: (query: string, path: string = '/') =>
+    apiClient.get(`/files/search?query=${encodeURIComponent(query)}&path=${encodeURIComponent(path)}`),
+  
+  getStorageStats: (path: string = '/') =>
+    apiClient.get(`/files/storage-stats?path=${encodeURIComponent(path)}`),
+  
+  previewFile: (fileId: string) =>
+    apiClient.get(`/files/preview/${fileId}`),
   
   getFileInfo: (fileId: string) => apiClient.get(`/files/${fileId}`),
 }
