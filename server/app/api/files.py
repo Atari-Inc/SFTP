@@ -115,6 +115,55 @@ async def list_files(
         
         # Check if user has access to requested path
         has_access = False
+        accessible_paths = []
+        
+        # For root path, redirect to user's home directory or show accessible folders
+        if path == "/":
+            # Show user's accessible folders as if they were in root
+            file_responses = []
+            
+            # Add user's home directory
+            home_path = f"/home/{current_user.username}"
+            file_responses.append({
+                "id": f"folder_home_{current_user.username}_{hash(home_path)}",
+                "name": f"home ({current_user.username})",
+                "size": 0,
+                "type": "folder",
+                "path": home_path,
+                "mime_type": None,
+                "permissions": "755",
+                "owner": current_user.username,
+                "group": current_user.username,
+                "created_at": datetime.utcnow().isoformat(),
+                "modified_at": datetime.utcnow().isoformat(),
+                "accessed_at": None
+            })
+            
+            # Add user's assigned folders
+            for folder in user_folders:
+                folder_name = folder.folder_path.strip('/').split('/')[-1] or folder.folder_path
+                file_responses.append({
+                    "id": f"folder_assigned_{folder_name}_{hash(folder.folder_path)}",
+                    "name": f"{folder_name} (assigned)",
+                    "size": 0,
+                    "type": "folder",
+                    "path": folder.folder_path,
+                    "mime_type": None,
+                    "permissions": folder.permission or "755",
+                    "owner": current_user.username,
+                    "group": current_user.username,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "modified_at": datetime.utcnow().isoformat(),
+                    "accessed_at": None
+                })
+            
+            return {
+                "data": file_responses,
+                "total": len(file_responses),
+                "path": path
+            }
+        
+        # Check access to specific paths
         if path == f"/home/{current_user.username}" or path.startswith(f"/home/{current_user.username}/"):
             has_access = True
         else:
@@ -153,6 +202,70 @@ async def list_files(
                 "accessed_at": file.accessed_at.isoformat() if file.accessed_at else None
             }
             file_responses.append(file_resp)
+        
+        # If accessing user's home directory and no database files exist, also check S3 directly
+        if path.startswith(f"/home/{current_user.username}") and len(file_responses) == 0:
+            # Check S3 for files in the user's home directory
+            s3_prefix = path.lstrip("/")
+            if s3_prefix and not s3_prefix.endswith("/"):
+                s3_prefix += "/"
+            
+            s3_objects = s3_service.list_files(s3_prefix)
+            processed_paths = set()
+            
+            for obj in s3_objects:
+                key = obj.get('Key', '')
+                size = obj.get('Size', 0)
+                last_modified = obj.get('LastModified')
+                
+                # Skip empty objects or current directory
+                if not key or key == s3_prefix:
+                    continue
+                    
+                # Get relative path from current directory
+                relative_key = key[len(s3_prefix):] if s3_prefix else key
+                
+                # Handle directory structure - show only direct children
+                if "/" in relative_key:
+                    # This is a subdirectory or nested file
+                    dir_name = relative_key.split("/")[0]
+                    if dir_name in processed_paths:
+                        continue
+                    processed_paths.add(dir_name)
+                    
+                    # Create folder entry
+                    file_resp = {
+                        "id": f"folder_{dir_name}_{hash(path + dir_name)}",
+                        "name": dir_name,
+                        "size": 0,
+                        "type": "folder",
+                        "path": f"{path.rstrip('/')}/{dir_name}" if path != "/" else f"/{dir_name}",
+                        "mime_type": None,
+                        "permissions": "755",
+                        "owner": current_user.username,
+                        "group": current_user.username,
+                        "created_at": last_modified.isoformat() if last_modified else None,
+                        "modified_at": last_modified.isoformat() if last_modified else None,
+                        "accessed_at": None
+                    }
+                    file_responses.append(file_resp)
+                else:
+                    # This is a file in current directory
+                    file_resp = {
+                        "id": f"file_{relative_key}_{hash(key)}",
+                        "name": relative_key,
+                        "size": size,
+                        "type": "file",
+                        "path": f"{path.rstrip('/')}/{relative_key}" if path != "/" else f"/{relative_key}",
+                        "mime_type": _get_mime_type(relative_key),
+                        "permissions": "644",
+                        "owner": current_user.username,
+                        "group": current_user.username,
+                        "created_at": last_modified.isoformat() if last_modified else None,
+                        "modified_at": last_modified.isoformat() if last_modified else None,
+                        "accessed_at": None
+                    }
+                    file_responses.append(file_resp)
         
         return {
             "data": file_responses,
