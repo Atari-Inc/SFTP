@@ -356,98 +356,50 @@ async def download_file(
 ):
     """Download a file - S3 only, no database storage"""
     
-    # Check if this is a database file (UUID format) or S3-only file
-    if file_id.startswith("s3_file:"):
-        # This is an S3-only file, extract the S3 key from the ID
-        s3_key = file_id[8:]  # Remove "s3_file:" prefix
-        
-        # Extract filename from S3 key
-        filename = s3_key.split("/")[-1]
-        
-        # Download from S3
-        file_data = s3_service.download_file(s3_key)
-        if not file_data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to download file"
-            )
-        
-        # Get file metadata for proper content type
-        metadata = s3_service.get_object_metadata(s3_key)
-        content_type = metadata.get('content_type') if metadata else _get_mime_type(filename)
-        
-        # Log activity
-        await log_activity(
-            db=db,
-            user_id=current_user.id,
-            username=current_user.username,
-            action=ActivityAction.DOWNLOAD,
-            resource="file",
-            resource_id=file_id,
-            status=ActivityStatus.SUCCESS,
-            details={"filename": filename, "s3_key": s3_key}
-        )
-        
-        return StreamingResponse(
-            io.BytesIO(file_data),
-            media_type=content_type or 'application/octet-stream',
-            headers={
-                "Content-Disposition": f"attachment; filename=\"{filename}\""
-            }
+    # Only handle S3-only files
+    if not file_id.startswith("s3_file:"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file ID format"
         )
     
-    else:
-        # This is a database file with proper UUID - legacy support
-        try:
-            uuid_id = UUID(file_id)
-            file = db.query(File).filter(
-                File.id == uuid_id,
-                File.owner_id == current_user.id
-            ).first()
-            
-            if not file:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File not found"
-                )
-            
-            # Download from S3
-            file_data = s3_service.download_file(file.s3_key)
-            if not file_data:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to download file"
-                )
-            
-            # Update accessed time
-            file.accessed_at = datetime.utcnow()
-            db.commit()
-            
-            # Log activity
-            await log_activity(
-                db=db,
-                user_id=current_user.id,
-                username=current_user.username,
-                action=ActivityAction.DOWNLOAD,
-                resource="file",
-                resource_id=str(file.id),
-                status=ActivityStatus.SUCCESS,
-                details={"filename": file.name}
-            )
-            
-            return StreamingResponse(
-                io.BytesIO(file_data),
-                media_type=file.mime_type or 'application/octet-stream',
-                headers={
-                    "Content-Disposition": f"attachment; filename=\"{file.name}\""
-                }
-            )
-            
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file ID format"
-            )
+    # Extract the S3 key from the ID
+    s3_key = file_id[8:]  # Remove "s3_file:" prefix
+    
+    # Extract filename from S3 key
+    filename = s3_key.split("/")[-1]
+    
+    # Download from S3
+    file_data = s3_service.download_file(s3_key)
+    if not file_data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to download file"
+        )
+    
+    # Get file metadata for proper content type
+    metadata = s3_service.get_object_metadata(s3_key)
+    content_type = metadata.get('content_type') if metadata else _get_mime_type(filename)
+    
+    # Log activity
+    await log_activity(
+        db=db,
+        user_id=current_user.id,
+        username=current_user.username,
+        action=ActivityAction.DOWNLOAD,
+        resource="file",
+        resource_id=file_id,
+        status=ActivityStatus.SUCCESS,
+        details={"filename": filename, "s3_key": s3_key}
+    )
+    
+    return StreamingResponse(
+        io.BytesIO(file_data),
+        media_type=content_type or 'application/octet-stream',
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\""
+        }
+    )
 
 class DeleteFilesRequest(BaseModel):
     file_ids: List[str]
@@ -459,106 +411,69 @@ async def delete_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete multiple files"""
+    """Delete multiple files - S3 only, no database storage"""
     deleted_count = 0
     errors = []
     
     for file_id in request.file_ids:
         try:
-            # Check if this is a database file (UUID format) or S3-only file
-            if file_id.startswith(("s3_file:", "s3_folder:")):
-                # This is an S3-only file, extract the S3 key from the ID
-                if file_id.startswith("s3_file:"):
-                    # Extract S3 key directly from the ID
-                    s3_key = file_id[8:]  # Remove "s3_file:" prefix
+            # Only handle S3-only files and folders
+            if file_id.startswith("s3_file:"):
+                # Extract S3 key directly from the ID
+                s3_key = file_id[8:]  # Remove "s3_file:" prefix
+                
+                # Extract filename from S3 key
+                filename = s3_key.split("/")[-1]
+                
+                # Delete from S3
+                success = s3_service.delete_file(s3_key)
+                if success:
+                    deleted_count += 1
+                    # Log activity
+                    await log_activity(
+                        db=db,
+                        user_id=current_user.id,
+                        username=current_user.username,
+                        action=ActivityAction.DELETE,
+                        resource="file",
+                        resource_id=file_id,
+                        status=ActivityStatus.SUCCESS,
+                        details={"filename": filename, "s3_key": s3_key}
+                    )
+                else:
+                    errors.append(f"Failed to delete {filename} from S3")
                     
-                    # Extract filename from S3 key
-                    filename = s3_key.split("/")[-1]
-                    
-                    # Delete from S3
-                    success = s3_service.delete_file(s3_key)
-                    if success:
-                        deleted_count += 1
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.DELETE,
-                            resource="file",
-                            resource_id=file_id,
-                            status=ActivityStatus.SUCCESS,
-                            details={"filename": filename, "s3_key": s3_key}
-                        )
-                    else:
-                        errors.append(f"Failed to delete {filename} from S3")
-                        
-                elif file_id.startswith("s3_folder:"):
-                    # Handle folder deletion
-                    s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
-                    if not s3_prefix.endswith("/"):
-                        s3_prefix += "/"
-                    
-                    # Extract folder name from S3 prefix
-                    foldername = s3_prefix.rstrip("/").split("/")[-1]
-                    
-                    # Delete folder from S3
-                    success = s3_service.delete_folder(s3_prefix)
-                    if success:
-                        deleted_count += 1
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.DELETE,
-                            resource="folder",
-                            resource_id=file_id,
-                            status=ActivityStatus.SUCCESS,
-                            details={"foldername": foldername, "s3_prefix": s3_prefix}
-                        )
-                    else:
-                        errors.append(f"Failed to delete folder {foldername} from S3")
-                        
+            elif file_id.startswith("s3_folder:"):
+                # Handle folder deletion
+                s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+                if not s3_prefix.endswith("/"):
+                    s3_prefix += "/"
+                
+                # Extract folder name from S3 prefix
+                foldername = s3_prefix.rstrip("/").split("/")[-1]
+                
+                # Delete folder from S3
+                success = s3_service.delete_folder(s3_prefix)
+                if success:
+                    deleted_count += 1
+                    # Log activity
+                    await log_activity(
+                        db=db,
+                        user_id=current_user.id,
+                        username=current_user.username,
+                        action=ActivityAction.DELETE,
+                        resource="folder",
+                        resource_id=file_id,
+                        status=ActivityStatus.SUCCESS,
+                        details={"foldername": foldername, "s3_prefix": s3_prefix}
+                    )
+                else:
+                    errors.append(f"Failed to delete folder {foldername} from S3")
             else:
-                # This is a database file with proper UUID
-                try:
-                    uuid_id = UUID(file_id)
-                    file = db.query(File).filter(
-                        File.id == uuid_id,
-                        File.owner_id == current_user.id
-                    ).first()
-                    
-                    if file:
-                        # Delete from S3
-                        if file.s3_key:
-                            s3_service.delete_file(file.s3_key)
-                        
-                        # Delete from database
-                        db.delete(file)
-                        deleted_count += 1
-                        
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.DELETE,
-                            resource="file",
-                            resource_id=str(file.id),
-                            status=ActivityStatus.SUCCESS,
-                            details={"filename": file.name}
-                        )
-                    else:
-                        errors.append(f"File {file_id} not found in database")
-                        
-                except ValueError:
-                    errors.append(f"Invalid UUID format: {file_id}")
+                errors.append(f"Invalid file ID format: {file_id}")
                     
         except Exception as e:
             errors.append(f"Error deleting {file_id}: {str(e)}")
-    
-    db.commit()
     
     return {
         "message": f"{deleted_count} files deleted successfully",
@@ -848,138 +763,85 @@ async def move_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Move files to a different location"""
+    """Move files to a different location - S3 only, no database storage"""
     moved_count = 0
     errors = []
     
     for file_id in request.file_ids:
         try:
-            # Check if this is a database file (UUID format) or S3-only file
-            if file_id.startswith(("s3_file:", "s3_folder:")):
-                # This is an S3-only file, extract the S3 key from the ID
-                if file_id.startswith("s3_file:"):
-                    # Extract S3 key directly from the ID
-                    old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+            # Only handle S3-only files and folders
+            if file_id.startswith("s3_file:"):
+                # Extract S3 key directly from the ID
+                old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+                
+                # Extract filename from S3 key
+                filename = old_s3_key.split("/")[-1]
+                
+                # Generate new S3 key
+                target_path_clean = request.target_path.strip("/")
+                if target_path_clean:
+                    new_s3_key = f"{target_path_clean}/{filename}"
+                else:
+                    new_s3_key = filename
+                
+                # Move in S3
+                success = s3_service.move_object(old_s3_key, new_s3_key)
+                
+                if success:
+                    moved_count += 1
+                    # Log activity
+                    await log_activity(
+                        db=db,
+                        user_id=current_user.id,
+                        username=current_user.username,
+                        action=ActivityAction.UPLOAD,  # Use existing action for now
+                        resource="file",
+                        resource_id=file_id,
+                        status=ActivityStatus.SUCCESS,
+                        details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
+                    )
+                else:
+                    errors.append(f"Failed to move {filename} in S3")
                     
-                    # Extract filename from S3 key
-                    filename = old_s3_key.split("/")[-1]
-                    
-                    # Generate new S3 key
-                    target_path_clean = request.target_path.strip("/")
-                    if target_path_clean:
-                        new_s3_key = f"{target_path_clean}/{filename}"
-                    else:
-                        new_s3_key = filename
-                    
-                    # Move in S3
-                    success = s3_service.move_object(old_s3_key, new_s3_key)
-                    
-                    if success:
-                        moved_count += 1
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.UPLOAD,  # Use existing action for now
-                            resource="file",
-                            resource_id=file_id,
-                            status=ActivityStatus.SUCCESS,
-                            details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
-                        )
-                    else:
-                        errors.append(f"Failed to move {filename} in S3")
-                        
-                elif file_id.startswith("s3_folder:"):
-                    # Handle folder moves
-                    old_s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
-                    if not old_s3_prefix.endswith("/"):
-                        old_s3_prefix += "/"
-                    
-                    # Extract folder name from S3 prefix
-                    foldername = old_s3_prefix.rstrip("/").split("/")[-1]
-                    
-                    # Generate new S3 prefix
-                    target_path_clean = request.target_path.strip("/")
-                    if target_path_clean:
-                        new_s3_prefix = f"{target_path_clean}/{foldername}/"
-                    else:
-                        new_s3_prefix = f"{foldername}/"
-                    
-                    # Move folder in S3
-                    success = s3_service.move_folder(old_s3_prefix, new_s3_prefix)
-                    
-                    if success:
-                        moved_count += 1
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.UPLOAD,
-                            resource="folder",
-                            resource_id=file_id,
-                            status=ActivityStatus.SUCCESS,
-                            details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
-                        )
-                    else:
-                        errors.append(f"Failed to move folder {foldername} in S3")
-                        
+            elif file_id.startswith("s3_folder:"):
+                # Handle folder moves
+                old_s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+                if not old_s3_prefix.endswith("/"):
+                    old_s3_prefix += "/"
+                
+                # Extract folder name from S3 prefix
+                foldername = old_s3_prefix.rstrip("/").split("/")[-1]
+                
+                # Generate new S3 prefix
+                target_path_clean = request.target_path.strip("/")
+                if target_path_clean:
+                    new_s3_prefix = f"{target_path_clean}/{foldername}/"
+                else:
+                    new_s3_prefix = f"{foldername}/"
+                
+                # Move folder in S3
+                success = s3_service.move_folder(old_s3_prefix, new_s3_prefix)
+                
+                if success:
+                    moved_count += 1
+                    # Log activity
+                    await log_activity(
+                        db=db,
+                        user_id=current_user.id,
+                        username=current_user.username,
+                        action=ActivityAction.UPLOAD,
+                        resource="folder",
+                        resource_id=file_id,
+                        status=ActivityStatus.SUCCESS,
+                        details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
+                    )
+                else:
+                    errors.append(f"Failed to move folder {foldername} in S3")
             else:
-                # This is a database file with proper UUID
-                try:
-                    uuid_id = UUID(file_id)
-                    file = db.query(File).filter(
-                        File.id == uuid_id,
-                        File.owner_id == current_user.id
-                    ).first()
-                    
-                    if not file:
-                        errors.append(f"File {file_id} not found in database")
-                        continue
-                    
-                    # Generate new S3 key
-                    old_s3_key = file.s3_key
-                    target_path_clean = request.target_path.strip("/")
-                    if target_path_clean:
-                        new_s3_key = f"{target_path_clean}/{file.name}"
-                    else:
-                        new_s3_key = file.name
-                    
-                    # Move in S3
-                    if file.type == FileType.FOLDER:
-                        success = s3_service.move_folder(old_s3_key, new_s3_key)
-                    else:
-                        success = s3_service.move_object(old_s3_key, new_s3_key)
-                    
-                    if success:
-                        # Update database
-                        file.s3_key = new_s3_key
-                        file.path = request.target_path
-                        file.modified_at = datetime.utcnow()
-                        moved_count += 1
-                        
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.UPLOAD,
-                            resource="file",
-                            resource_id=str(file.id),
-                            status=ActivityStatus.SUCCESS,
-                            details={"from_path": file.path, "to_path": request.target_path}
-                        )
-                    else:
-                        errors.append(f"Failed to move {file.name} in S3")
-                        
-                except ValueError:
-                    errors.append(f"Invalid UUID format: {file_id}")
+                errors.append(f"Invalid file ID format: {file_id}")
                 
         except Exception as e:
             errors.append(f"Error moving {file_id}: {str(e)}")
-    
-    db.commit()
     
     return {
         "moved_count": moved_count,
@@ -993,147 +855,85 @@ async def copy_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Copy files to a different location"""
+    """Copy files to a different location - S3 only, no database storage"""
     copied_count = 0
     errors = []
     
     for file_id in request.file_ids:
         try:
-            # Check if this is a database file (UUID format) or S3-only file
-            if file_id.startswith(("s3_file:", "s3_folder:")):
-                # This is an S3-only file, extract the S3 key from the ID
-                if file_id.startswith("s3_file:"):
-                    # Extract S3 key directly from the ID
-                    old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+            # Only handle S3-only files and folders
+            if file_id.startswith("s3_file:"):
+                # Extract S3 key directly from the ID
+                old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+                
+                # Extract filename from S3 key
+                filename = old_s3_key.split("/")[-1]
+                
+                # Generate new S3 key
+                target_path_clean = request.target_path.strip("/")
+                if target_path_clean:
+                    new_s3_key = f"{target_path_clean}/{filename}"
+                else:
+                    new_s3_key = filename
+                
+                # Copy in S3
+                success = s3_service.copy_object(old_s3_key, new_s3_key)
+                
+                if success:
+                    copied_count += 1
+                    # Log activity
+                    await log_activity(
+                        db=db,
+                        user_id=current_user.id,
+                        username=current_user.username,
+                        action=ActivityAction.UPLOAD,  # Use existing action for now
+                        resource="file",
+                        resource_id=file_id,
+                        status=ActivityStatus.SUCCESS,
+                        details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
+                    )
+                else:
+                    errors.append(f"Failed to copy {filename} in S3")
                     
-                    # Extract filename from S3 key
-                    filename = old_s3_key.split("/")[-1]
-                    
-                    # Generate new S3 key
-                    target_path_clean = request.target_path.strip("/")
-                    if target_path_clean:
-                        new_s3_key = f"{target_path_clean}/{filename}"
-                    else:
-                        new_s3_key = filename
-                    
-                    # Copy in S3
-                    success = s3_service.copy_object(old_s3_key, new_s3_key)
-                    
-                    if success:
-                        copied_count += 1
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.UPLOAD,  # Use existing action for now
-                            resource="file",
-                            resource_id=file_id,
-                            status=ActivityStatus.SUCCESS,
-                            details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
-                        )
-                    else:
-                        errors.append(f"Failed to copy {filename} in S3")
-                        
-                elif file_id.startswith("s3_folder:"):
-                    # Handle folder copies
-                    old_s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
-                    if not old_s3_prefix.endswith("/"):
-                        old_s3_prefix += "/"
-                    
-                    # Extract folder name from S3 prefix
-                    foldername = old_s3_prefix.rstrip("/").split("/")[-1]
-                    
-                    # Generate new S3 prefix
-                    target_path_clean = request.target_path.strip("/")
-                    if target_path_clean:
-                        new_s3_prefix = f"{target_path_clean}/{foldername}/"
-                    else:
-                        new_s3_prefix = f"{foldername}/"
-                    
-                    # Copy folder in S3
-                    success = s3_service.copy_folder(old_s3_prefix, new_s3_prefix)
-                    
-                    if success:
-                        copied_count += 1
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.UPLOAD,
-                            resource="folder",
-                            resource_id=file_id,
-                            status=ActivityStatus.SUCCESS,
-                            details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
-                        )
-                    else:
-                        errors.append(f"Failed to copy folder {foldername} in S3")
-                        
+            elif file_id.startswith("s3_folder:"):
+                # Handle folder copies
+                old_s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+                if not old_s3_prefix.endswith("/"):
+                    old_s3_prefix += "/"
+                
+                # Extract folder name from S3 prefix
+                foldername = old_s3_prefix.rstrip("/").split("/")[-1]
+                
+                # Generate new S3 prefix
+                target_path_clean = request.target_path.strip("/")
+                if target_path_clean:
+                    new_s3_prefix = f"{target_path_clean}/{foldername}/"
+                else:
+                    new_s3_prefix = f"{foldername}/"
+                
+                # Copy folder in S3
+                success = s3_service.copy_folder(old_s3_prefix, new_s3_prefix)
+                
+                if success:
+                    copied_count += 1
+                    # Log activity
+                    await log_activity(
+                        db=db,
+                        user_id=current_user.id,
+                        username=current_user.username,
+                        action=ActivityAction.UPLOAD,
+                        resource="folder",
+                        resource_id=file_id,
+                        status=ActivityStatus.SUCCESS,
+                        details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
+                    )
+                else:
+                    errors.append(f"Failed to copy folder {foldername} in S3")
             else:
-                # This is a database file with proper UUID
-                try:
-                    uuid_id = UUID(file_id)
-                    file = db.query(File).filter(
-                        File.id == uuid_id,
-                        File.owner_id == current_user.id
-                    ).first()
-                    
-                    if not file:
-                        errors.append(f"File {file_id} not found in database")
-                        continue
-                    
-                    # Generate new S3 key
-                    old_s3_key = file.s3_key
-                    target_path_clean = request.target_path.strip("/")
-                    if target_path_clean:
-                        new_s3_key = f"{target_path_clean}/{file.name}"
-                    else:
-                        new_s3_key = file.name
-                    
-                    # Copy in S3
-                    if file.type == FileType.FOLDER:
-                        success = s3_service.copy_folder(old_s3_key, new_s3_key)
-                    else:
-                        success = s3_service.copy_object(old_s3_key, new_s3_key)
-                    
-                    if success:
-                        # Create new database record
-                        new_file = File(
-                            id=uuid4(),
-                            name=file.name,
-                            size=file.size,
-                            type=file.type,
-                            path=request.target_path,
-                            s3_key=new_s3_key,
-                            mime_type=file.mime_type,
-                            owner_id=current_user.id
-                        )
-                        
-                        db.add(new_file)
-                        copied_count += 1
-                        
-                        # Log activity
-                        await log_activity(
-                            db=db,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            action=ActivityAction.UPLOAD,
-                            resource="file",
-                            resource_id=str(new_file.id),
-                            status=ActivityStatus.SUCCESS,
-                            details={"from_path": file.path, "to_path": request.target_path, "original_id": str(file.id)}
-                        )
-                    else:
-                        errors.append(f"Failed to copy {file.name} in S3")
-                        
-                except ValueError:
-                    errors.append(f"Invalid UUID format: {file_id}")
+                errors.append(f"Invalid file ID format: {file_id}")
                 
         except Exception as e:
             errors.append(f"Error copying {file_id}: {str(e)}")
-    
-    db.commit()
     
     return {
         "copied_count": copied_count,
@@ -1274,85 +1074,43 @@ async def preview_file(
 ):
     """Get file preview information - S3 only, no database storage"""
     
-    # Check if this is a database file (UUID format) or S3-only file
-    if file_id.startswith("s3_file:"):
-        # This is an S3-only file, extract the S3 key from the ID
-        s3_key = file_id[8:]  # Remove "s3_file:" prefix
-        
-        # Extract filename from S3 key
-        filename = s3_key.split("/")[-1]
-        
-        # Get file metadata from S3
-        metadata = s3_service.get_object_metadata(s3_key)
-        
-        if not metadata:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to get file metadata"
-            )
-        
-        # Generate temporary URL for preview (shorter expiration)
-        preview_url = s3_service.generate_presigned_url(s3_key, expiration=300)  # 5 minutes
-        
-        mime_type = _get_mime_type(filename)
-        
-        return {
-            "id": file_id,
-            "name": filename,
-            "size": metadata.get('size', 0),
-            "mime_type": mime_type,
-            "metadata": metadata,
-            "preview_url": preview_url,
-            "can_preview": mime_type and (
-                mime_type.startswith('image/') or 
-                mime_type.startswith('text/') or
-                mime_type == 'application/pdf'
-            )
-        }
+    # Only handle S3-only files
+    if not file_id.startswith("s3_file:"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file ID format"
+        )
     
-    else:
-        # This is a database file with proper UUID - legacy support
-        try:
-            uuid_id = UUID(file_id)
-            file = db.query(File).filter(
-                File.id == uuid_id,
-                File.owner_id == current_user.id
-            ).first()
-            
-            if not file:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File not found"
-                )
-            
-            # Get file metadata from S3
-            metadata = s3_service.get_object_metadata(file.s3_key)
-            
-            if not metadata:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to get file metadata"
-                )
-            
-            # Generate temporary URL for preview (shorter expiration)
-            preview_url = s3_service.generate_presigned_url(file.s3_key, expiration=300)  # 5 minutes
-            
-            return {
-                "id": str(file.id),
-                "name": file.name,
-                "size": file.size,
-                "mime_type": file.mime_type,
-                "metadata": metadata,
-                "preview_url": preview_url,
-                "can_preview": file.mime_type and (
-                    file.mime_type.startswith('image/') or 
-                    file.mime_type.startswith('text/') or
-                    file.mime_type == 'application/pdf'
-                )
-            }
-            
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file ID format"
-            )
+    # Extract the S3 key from the ID
+    s3_key = file_id[8:]  # Remove "s3_file:" prefix
+    
+    # Extract filename from S3 key
+    filename = s3_key.split("/")[-1]
+    
+    # Get file metadata from S3
+    metadata = s3_service.get_object_metadata(s3_key)
+    
+    if not metadata:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get file metadata"
+        )
+    
+    # Generate temporary URL for preview (shorter expiration)
+    preview_url = s3_service.generate_presigned_url(s3_key, expiration=300)  # 5 minutes
+    
+    mime_type = _get_mime_type(filename)
+    
+    return {
+        "id": file_id,
+        "name": filename,
+        "size": metadata.get('size', 0),
+        "mime_type": mime_type,
+        "metadata": metadata,
+        "preview_url": preview_url,
+        "can_preview": mime_type and (
+            mime_type.startswith('image/') or 
+            mime_type.startswith('text/') or
+            mime_type == 'application/pdf'
+        )
+    }
