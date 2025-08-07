@@ -18,6 +18,7 @@ import {
   Code,
   File,
   Folder,
+  FolderOpen,
   MoreVertical,
   Share2,
   Copy,
@@ -41,6 +42,55 @@ import {
 import { useFiles } from '@/contexts/FileContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatBytes, formatDate } from '@/utils'
+
+// Utility function to get file type from file name
+const getFileType = (file: FileItemType): string => {
+  if (file.type === 'folder') return 'Folder'
+  
+  const extension = file.name.split('.').pop()?.toLowerCase() || ''
+  
+  // Image types
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(extension)) {
+    return 'Image'
+  }
+  
+  // Document types
+  if (['pdf', 'doc', 'docx', 'txt', 'rtf', 'odt'].includes(extension)) {
+    return 'Document'
+  }
+  
+  // Spreadsheet types
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(extension)) {
+    return 'Spreadsheet'
+  }
+  
+  // Presentation types
+  if (['ppt', 'pptx', 'odp'].includes(extension)) {
+    return 'Presentation'
+  }
+  
+  // Video types
+  if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv', 'webm'].includes(extension)) {
+    return 'Video'
+  }
+  
+  // Audio types
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma'].includes(extension)) {
+    return 'Audio'
+  }
+  
+  // Archive types
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(extension)) {
+    return 'Archive'
+  }
+  
+  // Code types
+  if (['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'swift'].includes(extension)) {
+    return 'Code'
+  }
+  
+  return extension ? extension.toUpperCase() + ' File' : 'File'
+}
 import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -107,7 +157,7 @@ const EnhancedFileManager: React.FC = () => {
   const [previewData, setPreviewData] = useState<any>(null)
 
   // UI states
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<FileItemType[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -117,9 +167,15 @@ const EnhancedFileManager: React.FC = () => {
   const [showFilters, setShowFilters] = useState(false)
   const [filterType, setFilterType] = useState<'all' | 'folder' | 'image' | 'document' | 'video' | 'audio'>('all')
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    fileId: string | null
+  } | null>(null)
   
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     loadFiles()
@@ -130,10 +186,18 @@ const EnhancedFileManager: React.FC = () => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setActiveDropdown(null)
       }
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null)
+      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [selectedFiles, clipboard, files, currentPath])
 
   // Event handlers
   const handleFileSelect = (fileId: string, isCtrlClick: boolean) => {
@@ -267,6 +331,69 @@ const EnhancedFileManager: React.FC = () => {
       } catch (error) {
         // Error handled in shareFile function
       }
+    }
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, fileId: string | null = null) => {
+    e.preventDefault()
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      fileId
+    })
+    setActiveDropdown(null) // Close any active dropdown
+  }
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    // Keyboard shortcuts
+    if (e.ctrlKey || e.metaKey) {
+      switch (e.key.toLowerCase()) {
+        case 'a':
+          e.preventDefault()
+          selectFiles(files.map(f => f.id))
+          break
+        case 'c':
+          if (selectedFiles.length > 0) {
+            e.preventDefault()
+            copyFilesToClipboard(selectedFiles)
+          }
+          break
+        case 'v':
+          if (clipboard.fileIds.length > 0) {
+            e.preventDefault()
+            pasteFiles(currentPath, 'copy')
+          }
+          break
+        case 'x':
+          if (selectedFiles.length > 0) {
+            e.preventDefault()
+            copyFilesToClipboard(selectedFiles)
+            // Visual indication that files are cut (for move operation)
+          }
+          break
+      }
+    }
+    
+    // Delete key
+    if (e.key === 'Delete' && selectedFiles.length > 0) {
+      if (confirm(`Delete ${selectedFiles.length} selected item(s)?`)) {
+        deleteFiles(selectedFiles)
+      }
+    }
+    
+    // F2 key for rename
+    if (e.key === 'F2' && selectedFiles.length === 1) {
+      const file = files.find(f => f.id === selectedFiles[0])
+      if (file) {
+        handleRename(file)
+      }
+    }
+    
+    // Escape key
+    if (e.key === 'Escape') {
+      setContextMenu(null)
+      setActiveDropdown(null)
+      clearSelection()
     }
   }
 
@@ -496,6 +623,20 @@ const EnhancedFileManager: React.FC = () => {
               New Folder
             </Button>
             
+            <Button 
+              onClick={() => selectFiles(processedFiles.map(f => f.id))} 
+              variant="outline"
+              disabled={processedFiles.length === 0}
+            >
+              <CheckCircle className="h-4 w-4 mr-2" />
+              Select All
+            </Button>
+            
+            <Button onClick={() => loadFiles()} variant="outline">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            
             {selectedFiles.length > 0 && (
               <>
                 <div className="h-6 w-px bg-gray-300 mx-2" />
@@ -511,11 +652,24 @@ const EnhancedFileManager: React.FC = () => {
                   <Move className="h-4 w-4 mr-2" />
                   Move ({selectedFiles.length})
                 </Button>
+                {selectedFiles.length === 1 && (
+                  <Button 
+                    onClick={() => {
+                      const file = files.find(f => f.id === selectedFiles[0])
+                      if (file) handleRename(file)
+                    }}
+                    variant="outline" 
+                    size="sm"
+                  >
+                    <Edit2 className="h-4 w-4 mr-2" />
+                    Rename
+                  </Button>
+                )}
                 <Button 
                   onClick={() => handleShare(files.find(f => f.id === selectedFiles[0])!)} 
                   variant="outline" 
                   size="sm" 
-                  disabled={selectedFiles.length !== 1}
+                  disabled={selectedFiles.length !== 1 || files.find(f => f.id === selectedFiles[0])?.type === 'folder'}
                 >
                   <Share2 className="h-4 w-4 mr-2" />
                   Share
@@ -714,7 +868,10 @@ const EnhancedFileManager: React.FC = () => {
           </div>
         ) : viewMode === 'grid' ? (
           /* Grid View */
-          <div className="p-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <div 
+            className="p-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4"
+            onContextMenu={(e) => handleContextMenu(e, null)}
+          >
             {processedFiles.map((file) => (
               <div
                 key={file.id}
@@ -725,6 +882,7 @@ const EnhancedFileManager: React.FC = () => {
                 }`}
                 onClick={(e) => handleFileSelect(file.id, e.ctrlKey || e.metaKey)}
                 onDoubleClick={() => handleFileDoubleClick(file)}
+                onContextMenu={(e) => handleContextMenu(e, file.id)}
               >
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity" ref={dropdownRef}>
                   <button
@@ -732,7 +890,7 @@ const EnhancedFileManager: React.FC = () => {
                       e.stopPropagation()
                       setActiveDropdown(activeDropdown === file.id ? null : file.id)
                     }}
-                    className="p-1 rounded hover:bg-gray-100"
+                    className="p-1 rounded hover:bg-gray-100 dropdown-trigger"
                   >
                     <MoreVertical className="h-4 w-4" />
                   </button>
@@ -828,7 +986,10 @@ const EnhancedFileManager: React.FC = () => {
           </div>
         ) : (
           /* List View */
-          <div className="overflow-x-auto">
+          <div 
+            className="overflow-x-auto"
+            onContextMenu={(e) => handleContextMenu(e, null)}
+          >
             <table className="min-w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
@@ -850,7 +1011,13 @@ const EnhancedFileManager: React.FC = () => {
                     Name
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Type
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Size
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Created
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Modified
@@ -867,8 +1034,15 @@ const EnhancedFileManager: React.FC = () => {
                 {processedFiles.map((file) => (
                   <tr 
                     key={file.id} 
-                    className={`hover:bg-gray-50 ${selectedFiles.includes(file.id) ? 'bg-blue-50' : ''}`}
+                    className={`hover:bg-gray-50 cursor-pointer ${selectedFiles.includes(file.id) ? 'bg-blue-50' : ''}`}
+                    onClick={(e) => {
+                      // Don't trigger selection if clicking on checkbox or dropdown
+                      if (!(e.target as HTMLElement).closest('input') && !(e.target as HTMLElement).closest('.dropdown-trigger')) {
+                        handleFileSelect(file.id, e.ctrlKey || e.metaKey)
+                      }
+                    }}
                     onDoubleClick={() => handleFileDoubleClick(file)}
+                    onContextMenu={(e) => handleContextMenu(e, file.id)}
                   >
                     <td className="px-6 py-4">
                       <input
@@ -887,8 +1061,14 @@ const EnhancedFileManager: React.FC = () => {
                         <span className="text-sm font-medium text-gray-900">{file.name}</span>
                       </div>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
+                      {file.type === 'folder' ? 'Folder' : getFileType(file)}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {file.type === 'folder' ? '-' : formatBytes(file.size)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(file.created_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatDate(file.modified_at)}
@@ -1247,6 +1427,250 @@ const EnhancedFileManager: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      {/* Right-click Context Menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 bg-white rounded-md shadow-lg border py-1 min-w-48"
+          style={{
+            left: `${Math.min(contextMenu.x, window.innerWidth - 200)}px`,
+            top: `${Math.min(contextMenu.y, window.innerHeight - 300)}px`,
+          }}
+        >
+          {contextMenu.fileId ? (
+            // Context menu for specific file
+            <>
+              <button
+                onClick={() => {
+                  const file = files.find(f => f.id === contextMenu.fileId)
+                  if (file) {
+                    if (file.type === 'folder') {
+                      navigateToPath(file.path)
+                    } else {
+                      handlePreviewFile(file)
+                    }
+                  }
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                {files.find(f => f.id === contextMenu.fileId)?.type === 'folder' ? (
+                  <>
+                    <FolderOpen className="h-4 w-4 mr-3" />
+                    Open
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-4 w-4 mr-3" />
+                    Preview
+                  </>
+                )}
+              </button>
+              
+              <div className="border-t my-1"></div>
+              
+              <button
+                onClick={() => {
+                  const file = files.find(f => f.id === contextMenu.fileId)
+                  if (file) {
+                    handleRename(file)
+                  }
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                <Edit2 className="h-4 w-4 mr-3" />
+                Rename
+              </button>
+              
+              <button
+                onClick={() => {
+                  if (contextMenu.fileId) {
+                    copyFilesToClipboard([contextMenu.fileId])
+                  }
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                <Copy className="h-4 w-4 mr-3" />
+                Copy
+              </button>
+              
+              <button
+                onClick={() => {
+                  if (contextMenu.fileId) {
+                    copyFilesToClipboard([contextMenu.fileId])
+                    // Visual indication for move operation
+                  }
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                <Move className="h-4 w-4 mr-3" />
+                Cut (for Move)
+              </button>
+              
+              {files.find(f => f.id === contextMenu.fileId)?.type === 'file' && (
+                <>
+                  <button
+                    onClick={() => {
+                      if (contextMenu.fileId) {
+                        downloadFile(contextMenu.fileId)
+                      }
+                      setContextMenu(null)
+                    }}
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                  >
+                    <Download className="h-4 w-4 mr-3" />
+                    Download
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      const file = files.find(f => f.id === contextMenu.fileId)
+                      if (file) {
+                        handleShare(file)
+                      }
+                      setContextMenu(null)
+                    }}
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                  >
+                    <Share2 className="h-4 w-4 mr-3" />
+                    Share
+                  </button>
+                </>
+              )}
+              
+              <div className="border-t my-1"></div>
+              
+              <button
+                onClick={() => {
+                  if (contextMenu.fileId) {
+                    const file = files.find(f => f.id === contextMenu.fileId)
+                    if (file && confirm(`Delete "${file.name}"?`)) {
+                      deleteFiles([contextMenu.fileId])
+                    }
+                  }
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50 w-full text-left"
+              >
+                <Trash2 className="h-4 w-4 mr-3" />
+                Delete
+              </button>
+              
+              <div className="border-t my-1"></div>
+              
+              <button
+                onClick={() => {
+                  const file = files.find(f => f.id === contextMenu.fileId)
+                  if (file) {
+                    setSelectedFile(file)
+                    setShowDetailsModal(true)
+                  }
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                <Info className="h-4 w-4 mr-3" />
+                Properties
+              </button>
+            </>
+          ) : (
+            // Context menu for empty space
+            <>
+              {clipboard.fileIds.length > 0 && (
+                <>
+                  <button
+                    onClick={() => {
+                      pasteFiles(currentPath, 'copy')
+                      setContextMenu(null)
+                    }}
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                  >
+                    <Copy className="h-4 w-4 mr-3" />
+                    Paste (Copy)
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      pasteFiles(currentPath, 'move')
+                      setContextMenu(null)
+                    }}
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                  >
+                    <Move className="h-4 w-4 mr-3" />
+                    Paste (Move)
+                  </button>
+                  
+                  <div className="border-t my-1"></div>
+                </>
+              )}
+              
+              <button
+                onClick={() => {
+                  setShowCreateFolderModal(true)
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                <FolderPlus className="h-4 w-4 mr-3" />
+                New Folder
+              </button>
+              
+              <button
+                onClick={() => {
+                  fileInputRef.current?.click()
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                <Upload className="h-4 w-4 mr-3" />
+                Upload Files
+              </button>
+              
+              {selectedFiles.length > 0 && (
+                <>
+                  <div className="border-t my-1"></div>
+                  
+                  <button
+                    onClick={() => {
+                      selectFiles([])
+                      setContextMenu(null)
+                    }}
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                  >
+                    <X className="h-4 w-4 mr-3" />
+                    Clear Selection
+                  </button>
+                </>
+              )}
+              
+              <div className="border-t my-1"></div>
+              
+              <button
+                onClick={() => {
+                  loadFiles()
+                  setContextMenu(null)
+                }}
+                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+              >
+                <RefreshCw className="h-4 w-4 mr-3" />
+                Refresh
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Background click to close context menu */}
+      {contextMenu && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setContextMenu(null)}
+        />
+      )}
     </div>
   )
 }
