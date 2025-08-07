@@ -19,6 +19,33 @@ from ..config import settings
 
 router = APIRouter()
 
+@router.get("/debug-user-folders")
+async def debug_user_folders(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to check user's folder assignments"""
+    from ..models.user_folder import UserFolder
+    
+    user_folders = db.query(UserFolder).filter(
+        UserFolder.user_id == current_user.id,
+        UserFolder.is_active == True
+    ).all()
+    
+    return {
+        "user_id": str(current_user.id),
+        "username": current_user.username,
+        "folders": [
+            {
+                "id": str(folder.id),
+                "folder_path": folder.folder_path,
+                "permission": folder.permission,
+                "is_active": folder.is_active
+            }
+            for folder in user_folders
+        ]
+    }
+
 @router.get("/", response_model=dict)
 async def list_files(
     path: str = Query("/", description="Directory path"),
@@ -142,9 +169,10 @@ async def list_files(
             # Add user's assigned folders
             for folder in user_folders:
                 folder_name = folder.folder_path.strip('/').split('/')[-1] or folder.folder_path
+                # Use the folder path as-is, but generate proper ID
                 file_responses.append({
                     "id": f"folder_assigned_{folder_name}_{hash(folder.folder_path)}",
-                    "name": f"{folder_name} (assigned)",
+                    "name": folder_name,  # Remove "(assigned)" suffix for cleaner display
                     "size": 0,
                     "type": "folder",
                     "path": folder.folder_path,
@@ -203,9 +231,16 @@ async def list_files(
             }
             file_responses.append(file_resp)
         
-        # If accessing user's home directory and no database files exist, also check S3 directly
-        if path.startswith(f"/home/{current_user.username}") and len(file_responses) == 0:
-            # Check S3 for files in the user's home directory
+        # If accessing user's home directory or assigned folder and no database files exist, also check S3 directly
+        is_assigned_folder = False
+        for folder in user_folders:
+            if path == folder.folder_path or path.startswith(folder.folder_path + "/"):
+                is_assigned_folder = True
+                break
+        
+        # For assigned folders, always check S3 directly since they may not have database records
+        if is_assigned_folder or (path.startswith(f"/home/{current_user.username}") and len(file_responses) == 0):
+            # Check S3 for files in the assigned folder or user's home directory
             s3_prefix = path.lstrip("/")
             if s3_prefix and not s3_prefix.endswith("/"):
                 s3_prefix += "/"
