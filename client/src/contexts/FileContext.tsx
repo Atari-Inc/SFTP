@@ -30,7 +30,7 @@ interface FileState {
   operations: FileOperation[]
   isLoading: boolean
   error: string | null
-  clipboard: { operation: 'cut' | 'copy' | null; fileIds: string[] }
+  clipboard: { operation: 'copy' | null; fileIds: string[] }
 }
 
 type FileAction =
@@ -45,7 +45,7 @@ type FileAction =
   | { type: 'ADD_OPERATION'; payload: FileOperation }
   | { type: 'UPDATE_OPERATION'; payload: { id: string; updates: Partial<FileOperation> } }
   | { type: 'REMOVE_OPERATION'; payload: string }
-  | { type: 'SET_CLIPBOARD'; payload: { operation: 'cut' | 'copy' | null; fileIds: string[] } }
+  | { type: 'SET_CLIPBOARD'; payload: { operation: 'copy' | null; fileIds: string[] } }
   | { type: 'CLEAR_CLIPBOARD'; payload: void }
 
 const initialState: FileState = {
@@ -116,10 +116,9 @@ interface FileContextType extends FileState {
   searchFiles: (query: string) => Promise<FileItem[]>
   previewFile: (fileId: string) => Promise<any>
   bulkOperation: (operation: string, fileIds: string[], targetPath?: string) => Promise<void>
-  clipboard: { operation: 'cut' | 'copy' | null; fileIds: string[] }
-  cutFiles: (fileIds: string[]) => void
+  clipboard: { operation: 'copy' | null; fileIds: string[] }
   copyFilesToClipboard: (fileIds: string[]) => void
-  pasteFiles: (targetPath?: string) => Promise<void>
+  pasteFiles: (targetPath?: string, operation?: 'copy' | 'move') => Promise<void>
   clearClipboard: () => void
 }
 
@@ -448,19 +447,14 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     }
   }
 
-  const cutFiles = (fileIds: string[]) => {
-    dispatch({ type: 'SET_CLIPBOARD', payload: { operation: 'cut', fileIds } })
-    toast.success(`${fileIds.length} file(s) cut to clipboard`)
-  }
-
   const copyFilesToClipboard = (fileIds: string[]) => {
     dispatch({ type: 'SET_CLIPBOARD', payload: { operation: 'copy', fileIds } })
     toast.success(`${fileIds.length} file(s) copied to clipboard`)
   }
 
-  const pasteFiles = async (targetPath?: string) => {
-    const { operation, fileIds } = state.clipboard
-    if (!operation || fileIds.length === 0) {
+  const pasteFiles = async (targetPath?: string, operation: 'copy' | 'move' = 'copy') => {
+    const { fileIds } = state.clipboard
+    if (fileIds.length === 0) {
       toast.error('Nothing to paste')
       return
     }
@@ -468,9 +462,9 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     const destination = targetPath || state.currentPath
 
     try {
-      if (operation === 'cut') {
+      if (operation === 'move') {
         await moveFiles(fileIds, destination)
-      } else if (operation === 'copy') {
+      } else {
         await copyFiles(fileIds, destination)
       }
       
@@ -503,7 +497,6 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     searchFiles,
     previewFile,
     bulkOperation,
-    cutFiles,
     copyFilesToClipboard,
     pasteFiles,
     clearClipboard,

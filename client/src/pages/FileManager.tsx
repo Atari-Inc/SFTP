@@ -93,7 +93,6 @@ const FileManager: React.FC = () => {
     shareFile,
     searchFiles,
     previewFile,
-    cutFiles,
     copyFilesToClipboard,
     pasteFiles,
     clearClipboard,

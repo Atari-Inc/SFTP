@@ -92,7 +92,7 @@ async def list_files(
                 
                 # Create folder entry
                 file_resp = {
-                    "id": f"folder_{dir_name}_{hash(path + dir_name)}",
+                    "id": f"s3_folder:{path.rstrip('/')}/{dir_name}" if path != "/" else f"s3_folder:{dir_name}",
                     "name": dir_name,
                     "size": 0,
                     "type": "folder",
@@ -108,7 +108,7 @@ async def list_files(
             else:
                 # This is a file in current directory
                 file_resp = {
-                    "id": f"file_{relative_key}_{hash(key)}",
+                    "id": f"s3_file:{key}",
                     "name": relative_key,
                     "size": size,
                     "type": "file",
@@ -152,7 +152,7 @@ async def list_files(
             # Add user's home directory
             home_path = f"/home/{current_user.username}"
             file_responses.append({
-                "id": f"folder_home_{current_user.username}_{hash(home_path)}",
+                "id": f"s3_folder:{home_path}",
                 "name": f"home ({current_user.username})",
                 "size": 0,
                 "type": "folder",
@@ -171,7 +171,7 @@ async def list_files(
                 folder_name = folder.folder_path.strip('/').split('/')[-1] or folder.folder_path
                 # Use the folder path as-is, but generate proper ID
                 file_responses.append({
-                    "id": f"folder_assigned_{folder_name}_{hash(folder.folder_path)}",
+                    "id": f"s3_folder:{folder.folder_path}",
                     "name": folder_name,  # Remove "(assigned)" suffix for cleaner display
                     "size": 0,
                     "type": "folder",
@@ -240,7 +240,7 @@ async def list_files(
                 
                 # Create folder entry
                 file_resp = {
-                    "id": f"folder_{dir_name}_{hash(path + dir_name)}",
+                    "id": f"s3_folder:{path.rstrip('/')}/{dir_name}" if path != "/" else f"s3_folder:{dir_name}",
                     "name": dir_name,
                     "size": 0,
                     "type": "folder",
@@ -256,7 +256,7 @@ async def list_files(
             else:
                 # This is a file in current directory
                 file_resp = {
-                    "id": f"file_{relative_key}_{hash(key)}",
+                    "id": f"s3_file:{key}",
                     "name": relative_key,
                     "size": size,
                     "type": "file",
@@ -331,7 +331,7 @@ async def upload_file(
     
     # Return file info (generated ID format like file listing)
     return {
-        "id": f"file_{file.filename}_{hash(s3_key)}",
+        "id": f"s3_file:{s3_key}",
         "name": file.filename,
         "size": file_size,
         "type": "file",
@@ -416,73 +416,59 @@ async def delete_files(
     for file_id in request.file_ids:
         try:
             # Check if this is a database file (UUID format) or S3-only file
-            if file_id.startswith(("file_", "folder_")):
+            if file_id.startswith(("s3_file:", "s3_folder:")):
                 # This is an S3-only file, extract the S3 key from the ID
-                if file_id.startswith("file_"):
-                    # Extract filename from the generated ID
-                    parts = file_id.split("_")
-                    if len(parts) >= 2:
-                        filename = "_".join(parts[1:-1])  # Remove "file_" prefix and hash suffix
-                        
-                        # Construct S3 key
-                        current_path_clean = request.current_path.strip("/") if request.current_path != "/" else ""
-                        if current_path_clean:
-                            s3_key = f"{current_path_clean}/{filename}"
-                        else:
-                            s3_key = filename
-                        
-                        # Delete from S3
-                        success = s3_service.delete_file(s3_key)
-                        if success:
-                            deleted_count += 1
-                            # Log activity
-                            await log_activity(
-                                db=db,
-                                user_id=current_user.id,
-                                username=current_user.username,
-                                action=ActivityAction.DELETE,
-                                resource="file",
-                                resource_id=file_id,
-                                status=ActivityStatus.SUCCESS,
-                                details={"filename": filename, "s3_key": s3_key}
-                            )
-                        else:
-                            errors.append(f"Failed to delete {filename} from S3")
+                if file_id.startswith("s3_file:"):
+                    # Extract S3 key directly from the ID
+                    s3_key = file_id[8:]  # Remove "s3_file:" prefix
+                    
+                    # Extract filename from S3 key
+                    filename = s3_key.split("/")[-1]
+                    
+                    # Delete from S3
+                    success = s3_service.delete_file(s3_key)
+                    if success:
+                        deleted_count += 1
+                        # Log activity
+                        await log_activity(
+                            db=db,
+                            user_id=current_user.id,
+                            username=current_user.username,
+                            action=ActivityAction.DELETE,
+                            resource="file",
+                            resource_id=file_id,
+                            status=ActivityStatus.SUCCESS,
+                            details={"filename": filename, "s3_key": s3_key}
+                        )
                     else:
-                        errors.append(f"Invalid file ID format: {file_id}")
+                        errors.append(f"Failed to delete {filename} from S3")
                         
-                elif file_id.startswith("folder_"):
+                elif file_id.startswith("s3_folder:"):
                     # Handle folder deletion
-                    parts = file_id.split("_")
-                    if len(parts) >= 2:
-                        foldername = "_".join(parts[1:-1])
-                        
-                        # Construct S3 prefix
-                        current_path_clean = request.current_path.strip("/") if request.current_path != "/" else ""
-                        if current_path_clean:
-                            s3_prefix = f"{current_path_clean}/{foldername}/"
-                        else:
-                            s3_prefix = f"{foldername}/"
-                        
-                        # Delete folder from S3
-                        success = s3_service.delete_folder(s3_prefix)
-                        if success:
-                            deleted_count += 1
-                            # Log activity
-                            await log_activity(
-                                db=db,
-                                user_id=current_user.id,
-                                username=current_user.username,
-                                action=ActivityAction.DELETE,
-                                resource="folder",
-                                resource_id=file_id,
-                                status=ActivityStatus.SUCCESS,
-                                details={"foldername": foldername, "s3_prefix": s3_prefix}
-                            )
-                        else:
-                            errors.append(f"Failed to delete folder {foldername} from S3")
+                    s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+                    if not s3_prefix.endswith("/"):
+                        s3_prefix += "/"
+                    
+                    # Extract folder name from S3 prefix
+                    foldername = s3_prefix.rstrip("/").split("/")[-1]
+                    
+                    # Delete folder from S3
+                    success = s3_service.delete_folder(s3_prefix)
+                    if success:
+                        deleted_count += 1
+                        # Log activity
+                        await log_activity(
+                            db=db,
+                            user_id=current_user.id,
+                            username=current_user.username,
+                            action=ActivityAction.DELETE,
+                            resource="folder",
+                            resource_id=file_id,
+                            status=ActivityStatus.SUCCESS,
+                            details={"foldername": foldername, "s3_prefix": s3_prefix}
+                        )
                     else:
-                        errors.append(f"Invalid folder ID format: {file_id}")
+                        errors.append(f"Failed to delete folder {foldername} from S3")
                         
             else:
                 # This is a database file with proper UUID
@@ -573,7 +559,7 @@ async def create_folder(
         username=current_user.username,
         action=ActivityAction.CREATE,
         resource="folder",
-        resource_id=f"folder_{name}_{hash(s3_key)}",
+        resource_id=f"s3_folder:{s3_key}",
         status=ActivityStatus.SUCCESS,
         details={"folder_name": name, "path": path, "s3_path": s3_folder_path}
     )
@@ -583,7 +569,7 @@ async def create_folder(
     now = datetime.utcnow()
     
     return {
-        "id": f"folder_{name}_{hash(s3_key)}",
+        "id": f"s3_folder:{s3_key}",
         "name": name,
         "size": 0,
         "type": "folder",
@@ -697,89 +683,75 @@ async def move_files(
     for file_id in request.file_ids:
         try:
             # Check if this is a database file (UUID format) or S3-only file
-            if file_id.startswith(("file_", "folder_")):
+            if file_id.startswith(("s3_file:", "s3_folder:")):
                 # This is an S3-only file, extract the S3 key from the ID
-                if file_id.startswith("file_"):
-                    # Extract filename from the generated ID
-                    parts = file_id.split("_")
-                    if len(parts) >= 2:
-                        # Reconstruct the filename (everything between "file_" and the hash)
-                        filename = "_".join(parts[1:-1])  # Remove "file_" prefix and hash suffix
-                        
-                        # Get current path to construct full S3 key
-                        current_path_clean = request.current_path.strip("/") if request.current_path != "/" else ""
-                        if current_path_clean:
-                            old_s3_key = f"{current_path_clean}/{filename}"
-                        else:
-                            old_s3_key = filename
-                        
-                        # Generate new S3 key
-                        target_path_clean = request.target_path.strip("/")
-                        if target_path_clean:
-                            new_s3_key = f"{target_path_clean}/{filename}"
-                        else:
-                            new_s3_key = filename
-                        
-                        # Move in S3
-                        success = s3_service.move_object(old_s3_key, new_s3_key)
-                        
-                        if success:
-                            moved_count += 1
-                            # Log activity
-                            await log_activity(
-                                db=db,
-                                user_id=current_user.id,
-                                username=current_user.username,
-                                action=ActivityAction.UPLOAD,  # Use existing action for now
-                                resource="file",
-                                resource_id=file_id,
-                                status=ActivityStatus.SUCCESS,
-                                details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
-                            )
-                        else:
-                            errors.append(f"Failed to move {filename} in S3")
+                if file_id.startswith("s3_file:"):
+                    # Extract S3 key directly from the ID
+                    old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+                    
+                    # Extract filename from S3 key
+                    filename = old_s3_key.split("/")[-1]
+                    
+                    # Generate new S3 key
+                    target_path_clean = request.target_path.strip("/")
+                    if target_path_clean:
+                        new_s3_key = f"{target_path_clean}/{filename}"
                     else:
-                        errors.append(f"Invalid file ID format: {file_id}")
-                        
-                elif file_id.startswith("folder_"):
-                    # Handle folder moves similarly
-                    parts = file_id.split("_")
-                    if len(parts) >= 2:
-                        foldername = "_".join(parts[1:-1])
-                        
-                        # Construct S3 prefix for folder
-                        current_path_clean = request.current_path.strip("/") if request.current_path != "/" else ""
-                        if current_path_clean:
-                            old_s3_prefix = f"{current_path_clean}/{foldername}/"
-                        else:
-                            old_s3_prefix = f"{foldername}/"
-                        
-                        target_path_clean = request.target_path.strip("/")
-                        if target_path_clean:
-                            new_s3_prefix = f"{target_path_clean}/{foldername}/"
-                        else:
-                            new_s3_prefix = f"{foldername}/"
-                        
-                        # Move folder in S3
-                        success = s3_service.move_folder(old_s3_prefix, new_s3_prefix)
-                        
-                        if success:
-                            moved_count += 1
-                            # Log activity
-                            await log_activity(
-                                db=db,
-                                user_id=current_user.id,
-                                username=current_user.username,
-                                action=ActivityAction.UPLOAD,
-                                resource="folder",
-                                resource_id=file_id,
-                                status=ActivityStatus.SUCCESS,
-                                details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
-                            )
-                        else:
-                            errors.append(f"Failed to move folder {foldername} in S3")
+                        new_s3_key = filename
+                    
+                    # Move in S3
+                    success = s3_service.move_object(old_s3_key, new_s3_key)
+                    
+                    if success:
+                        moved_count += 1
+                        # Log activity
+                        await log_activity(
+                            db=db,
+                            user_id=current_user.id,
+                            username=current_user.username,
+                            action=ActivityAction.UPLOAD,  # Use existing action for now
+                            resource="file",
+                            resource_id=file_id,
+                            status=ActivityStatus.SUCCESS,
+                            details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
+                        )
                     else:
-                        errors.append(f"Invalid folder ID format: {file_id}")
+                        errors.append(f"Failed to move {filename} in S3")
+                        
+                elif file_id.startswith("s3_folder:"):
+                    # Handle folder moves
+                    old_s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+                    if not old_s3_prefix.endswith("/"):
+                        old_s3_prefix += "/"
+                    
+                    # Extract folder name from S3 prefix
+                    foldername = old_s3_prefix.rstrip("/").split("/")[-1]
+                    
+                    # Generate new S3 prefix
+                    target_path_clean = request.target_path.strip("/")
+                    if target_path_clean:
+                        new_s3_prefix = f"{target_path_clean}/{foldername}/"
+                    else:
+                        new_s3_prefix = f"{foldername}/"
+                    
+                    # Move folder in S3
+                    success = s3_service.move_folder(old_s3_prefix, new_s3_prefix)
+                    
+                    if success:
+                        moved_count += 1
+                        # Log activity
+                        await log_activity(
+                            db=db,
+                            user_id=current_user.id,
+                            username=current_user.username,
+                            action=ActivityAction.UPLOAD,
+                            resource="folder",
+                            resource_id=file_id,
+                            status=ActivityStatus.SUCCESS,
+                            details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
+                        )
+                    else:
+                        errors.append(f"Failed to move folder {foldername} in S3")
                         
             else:
                 # This is a database file with proper UUID
@@ -856,89 +828,75 @@ async def copy_files(
     for file_id in request.file_ids:
         try:
             # Check if this is a database file (UUID format) or S3-only file
-            if file_id.startswith(("file_", "folder_")):
+            if file_id.startswith(("s3_file:", "s3_folder:")):
                 # This is an S3-only file, extract the S3 key from the ID
-                if file_id.startswith("file_"):
-                    # Extract filename from the generated ID
-                    parts = file_id.split("_")
-                    if len(parts) >= 2:
-                        # Reconstruct the filename (everything between "file_" and the hash)
-                        filename = "_".join(parts[1:-1])  # Remove "file_" prefix and hash suffix
-                        
-                        # Get current path to construct full S3 key
-                        current_path_clean = request.current_path.strip("/") if request.current_path != "/" else ""
-                        if current_path_clean:
-                            old_s3_key = f"{current_path_clean}/{filename}"
-                        else:
-                            old_s3_key = filename
-                        
-                        # Generate new S3 key
-                        target_path_clean = request.target_path.strip("/")
-                        if target_path_clean:
-                            new_s3_key = f"{target_path_clean}/{filename}"
-                        else:
-                            new_s3_key = filename
-                        
-                        # Copy in S3
-                        success = s3_service.copy_object(old_s3_key, new_s3_key)
-                        
-                        if success:
-                            copied_count += 1
-                            # Log activity
-                            await log_activity(
-                                db=db,
-                                user_id=current_user.id,
-                                username=current_user.username,
-                                action=ActivityAction.UPLOAD,  # Use existing action for now
-                                resource="file",
-                                resource_id=file_id,
-                                status=ActivityStatus.SUCCESS,
-                                details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
-                            )
-                        else:
-                            errors.append(f"Failed to copy {filename} in S3")
+                if file_id.startswith("s3_file:"):
+                    # Extract S3 key directly from the ID
+                    old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+                    
+                    # Extract filename from S3 key
+                    filename = old_s3_key.split("/")[-1]
+                    
+                    # Generate new S3 key
+                    target_path_clean = request.target_path.strip("/")
+                    if target_path_clean:
+                        new_s3_key = f"{target_path_clean}/{filename}"
                     else:
-                        errors.append(f"Invalid file ID format: {file_id}")
-                        
-                elif file_id.startswith("folder_"):
-                    # Handle folder copies similarly
-                    parts = file_id.split("_")
-                    if len(parts) >= 2:
-                        foldername = "_".join(parts[1:-1])
-                        
-                        # Construct S3 prefix for folder
-                        current_path_clean = request.current_path.strip("/") if request.current_path != "/" else ""
-                        if current_path_clean:
-                            old_s3_prefix = f"{current_path_clean}/{foldername}/"
-                        else:
-                            old_s3_prefix = f"{foldername}/"
-                        
-                        target_path_clean = request.target_path.strip("/")
-                        if target_path_clean:
-                            new_s3_prefix = f"{target_path_clean}/{foldername}/"
-                        else:
-                            new_s3_prefix = f"{foldername}/"
-                        
-                        # Copy folder in S3
-                        success = s3_service.copy_folder(old_s3_prefix, new_s3_prefix)
-                        
-                        if success:
-                            copied_count += 1
-                            # Log activity
-                            await log_activity(
-                                db=db,
-                                user_id=current_user.id,
-                                username=current_user.username,
-                                action=ActivityAction.UPLOAD,
-                                resource="folder",
-                                resource_id=file_id,
-                                status=ActivityStatus.SUCCESS,
-                                details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
-                            )
-                        else:
-                            errors.append(f"Failed to copy folder {foldername} in S3")
+                        new_s3_key = filename
+                    
+                    # Copy in S3
+                    success = s3_service.copy_object(old_s3_key, new_s3_key)
+                    
+                    if success:
+                        copied_count += 1
+                        # Log activity
+                        await log_activity(
+                            db=db,
+                            user_id=current_user.id,
+                            username=current_user.username,
+                            action=ActivityAction.UPLOAD,  # Use existing action for now
+                            resource="file",
+                            resource_id=file_id,
+                            status=ActivityStatus.SUCCESS,
+                            details={"filename": filename, "from_key": old_s3_key, "to_key": new_s3_key}
+                        )
                     else:
-                        errors.append(f"Invalid folder ID format: {file_id}")
+                        errors.append(f"Failed to copy {filename} in S3")
+                        
+                elif file_id.startswith("s3_folder:"):
+                    # Handle folder copies
+                    old_s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+                    if not old_s3_prefix.endswith("/"):
+                        old_s3_prefix += "/"
+                    
+                    # Extract folder name from S3 prefix
+                    foldername = old_s3_prefix.rstrip("/").split("/")[-1]
+                    
+                    # Generate new S3 prefix
+                    target_path_clean = request.target_path.strip("/")
+                    if target_path_clean:
+                        new_s3_prefix = f"{target_path_clean}/{foldername}/"
+                    else:
+                        new_s3_prefix = f"{foldername}/"
+                    
+                    # Copy folder in S3
+                    success = s3_service.copy_folder(old_s3_prefix, new_s3_prefix)
+                    
+                    if success:
+                        copied_count += 1
+                        # Log activity
+                        await log_activity(
+                            db=db,
+                            user_id=current_user.id,
+                            username=current_user.username,
+                            action=ActivityAction.UPLOAD,
+                            resource="folder",
+                            resource_id=file_id,
+                            status=ActivityStatus.SUCCESS,
+                            details={"foldername": foldername, "from_prefix": old_s3_prefix, "to_prefix": new_s3_prefix}
+                        )
+                    else:
+                        errors.append(f"Failed to copy folder {foldername} in S3")
                         
             else:
                 # This is a database file with proper UUID

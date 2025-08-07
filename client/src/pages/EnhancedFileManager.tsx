@@ -81,7 +81,6 @@ const EnhancedFileManager: React.FC = () => {
     shareFile,
     searchFiles,
     previewFile,
-    cutFiles,
     copyFilesToClipboard,
     pasteFiles,
     clearClipboard,
@@ -207,11 +206,6 @@ const EnhancedFileManager: React.FC = () => {
   }
 
   // New enhanced handlers
-  const handleCutFiles = () => {
-    if (selectedFiles.length > 0) {
-      cutFiles(selectedFiles)
-    }
-  }
 
   const handleCopyFiles = () => {
     if (selectedFiles.length > 0) {
@@ -219,8 +213,8 @@ const EnhancedFileManager: React.FC = () => {
     }
   }
 
-  const handlePasteFiles = async () => {
-    await pasteFiles(currentPath)
+  const handlePasteFiles = async (operation: 'copy' | 'move' = 'copy') => {
+    await pasteFiles(currentPath, operation)
   }
 
   const handleRename = (file: FileItemType) => {
@@ -424,7 +418,7 @@ const EnhancedFileManager: React.FC = () => {
           <div>
             <h1 className="text-3xl font-bold mb-2">Enhanced File Manager</h1>
             <p className="text-blue-100">
-              Complete AWS S3 File Management with Cut, Copy, Paste, Share & More
+              Complete AWS S3 File Management with Copy, Paste, Move, Share & More
             </p>
           </div>
           <div className="flex items-center space-x-4">
@@ -509,10 +503,6 @@ const EnhancedFileManager: React.FC = () => {
                   <Download className="h-4 w-4 mr-2" />
                   Download ({selectedFiles.length})
                 </Button>
-                <Button onClick={handleCutFiles} variant="outline" size="sm">
-                  <Scissors className="h-4 w-4 mr-2" />
-                  Cut ({selectedFiles.length})
-                </Button>
                 <Button onClick={handleCopyFiles} variant="outline" size="sm">
                   <Copy className="h-4 w-4 mr-2" />
                   Copy ({selectedFiles.length})
@@ -548,10 +538,15 @@ const EnhancedFileManager: React.FC = () => {
               <div className="flex items-center bg-blue-50 border border-blue-200 rounded-lg px-3 py-1 text-sm mr-2">
                 <Clipboard className="h-4 w-4 mr-2 text-blue-600" />
                 <span className="text-blue-700">
-                  {clipboard.fileIds.length} file(s) {clipboard.operation === 'cut' ? 'cut' : 'copied'}
+                  {clipboard.fileIds.length} file(s) copied
                 </span>
-                <Button onClick={handlePasteFiles} variant="outline" size="sm" className="ml-2">
-                  Paste Here
+                <Button onClick={() => handlePasteFiles('copy')} variant="outline" size="sm" className="ml-2">
+                  <Copy className="h-3 w-3 mr-1" />
+                  Copy Here
+                </Button>
+                <Button onClick={() => handlePasteFiles('move')} variant="outline" size="sm" className="ml-1">
+                  <Move className="h-3 w-3 mr-1" />
+                  Move Here
                 </Button>
                 <Button onClick={clearClipboard} variant="outline" size="sm" className="ml-1">
                   <X className="h-3 w-3" />
@@ -766,17 +761,6 @@ const EnhancedFileManager: React.FC = () => {
                         >
                           <Edit2 className="h-4 w-4 mr-3" />
                           Rename
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            cutFiles([file.id])
-                            setActiveDropdown(null)
-                          }}
-                          className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
-                        >
-                          <Scissors className="h-4 w-4 mr-3" />
-                          Cut
                         </button>
                         <button
                           onClick={(e) => {
