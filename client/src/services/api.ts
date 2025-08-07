@@ -96,16 +96,16 @@ export const fileAPI = {
   downloadFile: (fileId: string) =>
     apiClient.get(`/files/${encodeURIComponent(fileId)}/download`, { responseType: 'blob' }),
   
-  deleteFiles: (data: { file_ids: string[]; current_path?: string }) =>
+  deleteFiles: (data: { file_ids: string[] }) =>
     apiClient.delete('/files', { data }),
   
   createFolder: (data: { name: string; path: string }) =>
     apiClient.post('/files/folder', data),
   
-  moveFiles: (data: { file_ids: string[]; target_path: string; current_path?: string }) =>
+  moveFiles: (data: { file_ids: string[]; target_path: string }) =>
     apiClient.put('/files/move', data),
   
-  copyFiles: (data: { file_ids: string[]; target_path: string; current_path?: string }) =>
+  copyFiles: (data: { file_ids: string[]; target_path: string }) =>
     apiClient.post('/files/copy', data),
   
   renameFile: (fileId: string, newName: string) =>

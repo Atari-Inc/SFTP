@@ -290,8 +290,7 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
   const deleteFiles = async (fileIds: string[]) => {
     try {
       const response = await fileAPI.deleteFiles({ 
-        file_ids: fileIds, 
-        current_path: state.currentPath 
+        file_ids: fileIds
       })
       if (response.data.success) {
         fileIds.forEach(id => {
@@ -340,8 +339,7 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     try {
       const response = await fileAPI.moveFiles({ 
         file_ids: fileIds, 
-        target_path: targetPath, 
-        current_path: state.currentPath 
+        target_path: targetPath
       })
       if (response.data.success) {
         toast.success(`${response.data.moved_count} file(s) moved successfully`)
@@ -360,8 +358,7 @@ export const FileProvider: React.FC<FileProviderProps> = ({ children }) => {
     try {
       const response = await fileAPI.copyFiles({ 
         file_ids: fileIds, 
-        target_path: targetPath, 
-        current_path: state.currentPath 
+        target_path: targetPath
       })
       if (response.data.success) {
         toast.success(`${response.data.copied_count} file(s) copied successfully`)

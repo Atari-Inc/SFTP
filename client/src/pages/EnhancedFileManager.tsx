@@ -126,7 +126,6 @@ const EnhancedFileManager: React.FC = () => {
     clearSelection,
     createFolder,
     moveFiles,
-    copyFiles,
     renameFile,
     shareFile,
     searchFiles,
@@ -137,7 +136,6 @@ const EnhancedFileManager: React.FC = () => {
   } = useFiles()
 
   const { user } = useAuth()
-  const isAdmin = user?.role === 'admin'
 
   // Modal states
   const [showUploadModal, setShowUploadModal] = useState(false)

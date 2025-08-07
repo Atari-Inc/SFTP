@@ -1,16 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File as FastAPIFile, Query, Form, Body
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File as FastAPIFile, Form, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional, Dict, Any
-from uuid import UUID, uuid4
-import os
+from typing import List, Optional
+from uuid import UUID
 import io
 from datetime import datetime
 from pydantic import BaseModel
 from ..database import get_db
-from ..models.file import File, FileType
+from ..models.file import File
 from ..models.user import User
-from ..schemas.file import FileResponse, FileList
 from ..core.dependencies import get_current_user
 from ..services.s3_service import s3_service
 from ..services.activity_logger import log_activity
@@ -354,56 +352,105 @@ async def download_file(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Download a file - S3 only, no database storage"""
+    """Download a file or folder as zip - S3 only, no database storage"""
     
-    # Only handle S3-only files
-    if not file_id.startswith("s3_file:"):
+    # Handle both files and folders
+    if file_id.startswith("s3_file:"):
+        # Download single file
+        s3_key = file_id[8:]  # Remove "s3_file:" prefix
+        
+        # Extract filename from S3 key
+        filename = s3_key.split("/")[-1]
+        
+        # Download from S3
+        file_data = s3_service.download_file(s3_key)
+        if not file_data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to download file"
+            )
+        
+        # Get file metadata for proper content type
+        metadata = s3_service.get_object_metadata(s3_key)
+        content_type = metadata.get('content_type') if metadata else _get_mime_type(filename)
+        
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            username=current_user.username,
+            action=ActivityAction.DOWNLOAD,
+            resource="file",
+            resource_id=file_id,
+            status=ActivityStatus.SUCCESS,
+            details={"filename": filename, "s3_key": s3_key}
+        )
+        
+        return StreamingResponse(
+            io.BytesIO(file_data),
+            media_type=content_type or 'application/octet-stream',
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{filename}\""
+            }
+        )
+        
+    elif file_id.startswith("s3_folder:"):
+        # Download folder as zip
+        import zipfile
+        from io import BytesIO
+        
+        s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+        if not s3_prefix.endswith("/"):
+            s3_prefix += "/"
+        
+        # Get folder name for zip file
+        folder_name = s3_prefix.rstrip("/").split("/")[-1]
+        
+        # Create zip file in memory
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # List all files in the folder
+            objects = s3_service.list_files(s3_prefix)
+            
+            for obj in objects:
+                key = obj.get('Key', '')
+                if key and key != s3_prefix:
+                    # Download file content
+                    file_data = s3_service.download_file(key)
+                    if file_data:
+                        # Add to zip with relative path
+                        relative_path = key[len(s3_prefix):]
+                        zip_file.writestr(relative_path, file_data)
+        
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            username=current_user.username,
+            action=ActivityAction.DOWNLOAD,
+            resource="folder",
+            resource_id=file_id,
+            status=ActivityStatus.SUCCESS,
+            details={"folder_name": folder_name, "s3_prefix": s3_prefix}
+        )
+        
+        # Return zip file
+        zip_buffer.seek(0)
+        return StreamingResponse(
+            zip_buffer,
+            media_type='application/zip',
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{folder_name}.zip\""
+            }
+        )
+    else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid file ID format"
         )
-    
-    # Extract the S3 key from the ID
-    s3_key = file_id[8:]  # Remove "s3_file:" prefix
-    
-    # Extract filename from S3 key
-    filename = s3_key.split("/")[-1]
-    
-    # Download from S3
-    file_data = s3_service.download_file(s3_key)
-    if not file_data:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to download file"
-        )
-    
-    # Get file metadata for proper content type
-    metadata = s3_service.get_object_metadata(s3_key)
-    content_type = metadata.get('content_type') if metadata else _get_mime_type(filename)
-    
-    # Log activity
-    await log_activity(
-        db=db,
-        user_id=current_user.id,
-        username=current_user.username,
-        action=ActivityAction.DOWNLOAD,
-        resource="file",
-        resource_id=file_id,
-        status=ActivityStatus.SUCCESS,
-        details={"filename": filename, "s3_key": s3_key}
-    )
-    
-    return StreamingResponse(
-        io.BytesIO(file_data),
-        media_type=content_type or 'application/octet-stream',
-        headers={
-            "Content-Disposition": f"attachment; filename=\"{filename}\""
-        }
-    )
 
 class DeleteFilesRequest(BaseModel):
     file_ids: List[str]
-    current_path: Optional[str] = "/"
 
 @router.delete("/", response_model=dict)
 async def delete_files(
@@ -735,12 +782,10 @@ async def rename_file(
 class MoveFilesRequest(BaseModel):
     file_ids: List[str]
     target_path: str
-    current_path: Optional[str] = "/"
 
 class CopyFilesRequest(BaseModel):
     file_ids: List[str]
     target_path: str
-    current_path: Optional[str] = "/"
 
 class RenameRequest(BaseModel):
     name: str
@@ -755,7 +800,6 @@ class BulkOperationRequest(BaseModel):
     operation: str  # delete, move, copy
     file_ids: List[str]
     target_path: Optional[str] = None
-    current_path: Optional[str] = "/"
 
 @router.put("/move", response_model=dict)
 async def move_files(
@@ -998,13 +1042,13 @@ async def bulk_operation(
 ):
     """Perform bulk operations on multiple files"""
     if request.operation == "delete":
-        delete_req = DeleteFilesRequest(file_ids=request.file_ids, current_path=request.current_path)
+        delete_req = DeleteFilesRequest(file_ids=request.file_ids)
         return await delete_files(delete_req, current_user, db)
     elif request.operation == "move" and request.target_path:
-        move_req = MoveFilesRequest(file_ids=request.file_ids, target_path=request.target_path, current_path=request.current_path)
+        move_req = MoveFilesRequest(file_ids=request.file_ids, target_path=request.target_path)
         return await move_files(move_req, current_user, db)
     elif request.operation == "copy" and request.target_path:
-        copy_req = CopyFilesRequest(file_ids=request.file_ids, target_path=request.target_path, current_path=request.current_path)
+        copy_req = CopyFilesRequest(file_ids=request.file_ids, target_path=request.target_path)
         return await copy_files(copy_req, current_user, db)
     else:
         raise HTTPException(
