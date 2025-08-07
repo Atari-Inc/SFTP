@@ -94,7 +94,7 @@ export const fileAPI = {
     }),
   
   downloadFile: (fileId: string) =>
-    apiClient.get(`/files/${fileId}/download`, { responseType: 'blob' }),
+    apiClient.get(`/files/${encodeURIComponent(fileId)}/download`, { responseType: 'blob' }),
   
   deleteFiles: (data: { file_ids: string[]; current_path?: string }) =>
     apiClient.delete('/files', { data }),
@@ -109,7 +109,7 @@ export const fileAPI = {
     apiClient.post('/files/copy', data),
   
   renameFile: (fileId: string, newName: string) =>
-    apiClient.put(`/files/${fileId}/rename`, { name: newName }),
+    apiClient.put(`/files/${encodeURIComponent(fileId)}/rename`, { name: newName }),
   
   shareFile: (data: { file_id: string; share_with: string[]; permission?: string; expires_in?: number }) =>
     apiClient.post('/files/share', data),
@@ -124,9 +124,9 @@ export const fileAPI = {
     apiClient.get(`/files/storage-stats?path=${encodeURIComponent(path)}`),
   
   previewFile: (fileId: string) =>
-    apiClient.get(`/files/preview/${fileId}`),
+    apiClient.get(`/files/preview/${encodeURIComponent(fileId)}`),
   
-  getFileInfo: (fileId: string) => apiClient.get(`/files/${fileId}`),
+  getFileInfo: (fileId: string) => apiClient.get(`/files/${encodeURIComponent(fileId)}`),
 }
 
 export const userAPI = {

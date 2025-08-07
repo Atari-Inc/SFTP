@@ -350,54 +350,104 @@ async def upload_file(
 
 @router.get("/{file_id}/download")
 async def download_file(
-    file_id: UUID,
+    file_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Download a file"""
-    # Get file from database
-    file = db.query(File).filter(
-        File.id == file_id,
-        File.owner_id == current_user.id
-    ).first()
+    """Download a file - S3 only, no database storage"""
     
-    if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
+    # Check if this is a database file (UUID format) or S3-only file
+    if file_id.startswith("s3_file:"):
+        # This is an S3-only file, extract the S3 key from the ID
+        s3_key = file_id[8:]  # Remove "s3_file:" prefix
+        
+        # Extract filename from S3 key
+        filename = s3_key.split("/")[-1]
+        
+        # Download from S3
+        file_data = s3_service.download_file(s3_key)
+        if not file_data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to download file"
+            )
+        
+        # Get file metadata for proper content type
+        metadata = s3_service.get_object_metadata(s3_key)
+        content_type = metadata.get('content_type') if metadata else _get_mime_type(filename)
+        
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            username=current_user.username,
+            action=ActivityAction.DOWNLOAD,
+            resource="file",
+            resource_id=file_id,
+            status=ActivityStatus.SUCCESS,
+            details={"filename": filename, "s3_key": s3_key}
+        )
+        
+        return StreamingResponse(
+            io.BytesIO(file_data),
+            media_type=content_type or 'application/octet-stream',
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{filename}\""
+            }
         )
     
-    # Download from S3
-    file_data = s3_service.download_file(file.s3_key)
-    if not file_data:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to download file"
-        )
-    
-    # Update accessed time
-    file.accessed_at = datetime.utcnow()
-    db.commit()
-    
-    # Log activity
-    await log_activity(
-        db=db,
-        user_id=current_user.id,
-        username=current_user.username,
-        action=ActivityAction.DOWNLOAD,
-        resource="file",
-        resource_id=str(file.id),
-        status=ActivityStatus.SUCCESS,
-        details={"filename": file.name}
-    )
-    
-    return StreamingResponse(
-        io.BytesIO(file_data),
-        media_type=file.mime_type or 'application/octet-stream',
-        headers={
-            "Content-Disposition": f"attachment; filename={file.name}"
-        }
-    )
+    else:
+        # This is a database file with proper UUID - legacy support
+        try:
+            uuid_id = UUID(file_id)
+            file = db.query(File).filter(
+                File.id == uuid_id,
+                File.owner_id == current_user.id
+            ).first()
+            
+            if not file:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found"
+                )
+            
+            # Download from S3
+            file_data = s3_service.download_file(file.s3_key)
+            if not file_data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to download file"
+                )
+            
+            # Update accessed time
+            file.accessed_at = datetime.utcnow()
+            db.commit()
+            
+            # Log activity
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                username=current_user.username,
+                action=ActivityAction.DOWNLOAD,
+                resource="file",
+                resource_id=str(file.id),
+                status=ActivityStatus.SUCCESS,
+                details={"filename": file.name}
+            )
+            
+            return StreamingResponse(
+                io.BytesIO(file_data),
+                media_type=file.mime_type or 'application/octet-stream',
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"{file.name}\""
+                }
+            )
+            
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file ID format"
+            )
 
 class DeleteFilesRequest(BaseModel):
     file_ids: List[str]
@@ -583,14 +633,14 @@ async def create_folder(
         "accessed_at": None
     }
 
-@router.put("/{file_id}/rename", response_model=FileResponse)
+@router.put("/{file_id}/rename", response_model=dict)
 async def rename_file(
-    file_id: UUID,
+    file_id: str,
     rename_data: dict,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Rename a file or folder"""
+    """Rename a file or folder - S3 only, no database storage"""
     new_name = rename_data.get("name")
     
     if not new_name:
@@ -599,50 +649,172 @@ async def rename_file(
             detail="New name is required"
         )
     
-    file = db.query(File).filter(
-        File.id == file_id,
-        File.owner_id == current_user.id
-    ).first()
+    # Check if this is a database file (UUID format) or S3-only file
+    if file_id.startswith(("s3_file:", "s3_folder:")):
+        # This is an S3-only file, extract the S3 key from the ID
+        if file_id.startswith("s3_file:"):
+            # Extract S3 key directly from the ID
+            old_s3_key = file_id[8:]  # Remove "s3_file:" prefix
+            
+            # Extract current filename and path
+            old_filename = old_s3_key.split("/")[-1]
+            path_prefix = "/".join(old_s3_key.split("/")[:-1])
+            
+            # Generate new S3 key
+            if path_prefix:
+                new_s3_key = f"{path_prefix}/{new_name}"
+            else:
+                new_s3_key = new_name
+            
+            # Rename in S3 (move to new key)
+            success = s3_service.move_object(old_s3_key, new_s3_key)
+            
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to rename file in S3"
+                )
+            
+            # Log activity
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                username=current_user.username,
+                action=ActivityAction.UPLOAD,  # Use existing action for now
+                resource="file",
+                resource_id=file_id,
+                status=ActivityStatus.SUCCESS,
+                details={"old_name": old_filename, "new_name": new_name, "old_key": old_s3_key, "new_key": new_s3_key}
+            )
+            
+            # Get file metadata from S3 to get accurate size and timestamps
+            metadata = s3_service.get_object_metadata(new_s3_key)
+            
+            return {
+                "id": f"s3_file:{new_s3_key}",
+                "name": new_name,
+                "size": metadata.get('size', 0) if metadata else 0,
+                "type": "file",
+                "path": f"/{path_prefix}" if path_prefix else "/",
+                "mime_type": _get_mime_type(new_name),
+                "permissions": "644",
+                "owner": current_user.username,
+                "group": "admin",
+                "created_at": metadata.get('last_modified').isoformat() if metadata and metadata.get('last_modified') else None,
+                "modified_at": metadata.get('last_modified').isoformat() if metadata and metadata.get('last_modified') else None,
+                "accessed_at": None
+            }
+            
+        elif file_id.startswith("s3_folder:"):
+            # Handle folder rename
+            old_s3_prefix = file_id[10:]  # Remove "s3_folder:" prefix
+            if not old_s3_prefix.endswith("/"):
+                old_s3_prefix += "/"
+            
+            # Extract current folder name and parent path
+            old_foldername = old_s3_prefix.rstrip("/").split("/")[-1]
+            parent_path = "/".join(old_s3_prefix.rstrip("/").split("/")[:-1])
+            
+            # Generate new S3 prefix
+            if parent_path:
+                new_s3_prefix = f"{parent_path}/{new_name}/"
+            else:
+                new_s3_prefix = f"{new_name}/"
+            
+            # Rename folder in S3 (move all contents)
+            success = s3_service.move_folder(old_s3_prefix, new_s3_prefix)
+            
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to rename folder in S3"
+                )
+            
+            # Log activity
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                username=current_user.username,
+                action=ActivityAction.UPLOAD,  # Use existing action for now
+                resource="folder",
+                resource_id=file_id,
+                status=ActivityStatus.SUCCESS,
+                details={"old_name": old_foldername, "new_name": new_name, "old_prefix": old_s3_prefix, "new_prefix": new_s3_prefix}
+            )
+            
+            # Return updated folder info
+            from datetime import datetime
+            now = datetime.utcnow()
+            
+            return {
+                "id": f"s3_folder:{new_s3_prefix.rstrip('/')}",
+                "name": new_name,
+                "size": 0,
+                "type": "folder",
+                "path": f"/{parent_path}" if parent_path else "/",
+                "mime_type": None,
+                "permissions": "755",
+                "owner": current_user.username,
+                "group": "admin",
+                "created_at": now.isoformat(),
+                "modified_at": now.isoformat(),
+                "accessed_at": None
+            }
     
-    if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-    
-    old_name = file.name
-    file.name = new_name
-    file.modified_at = datetime.utcnow()
-    
-    db.commit()
-    db.refresh(file)
-    
-    # Log activity
-    await log_activity(
-        db=db,
-        user_id=current_user.id,
-        username=current_user.username,
-        action=ActivityAction.RENAME,
-        resource="file",
-        resource_id=str(file.id),
-        status=ActivityStatus.SUCCESS,
-        details={"old_name": old_name, "new_name": new_name}
-    )
-    
-    return FileResponse(
-        id=file.id,
-        name=file.name,
-        size=file.size,
-        type=file.type,
-        path=file.path,
-        mime_type=file.mime_type,
-        permissions=file.permissions,
-        owner=current_user.username,
-        group=file.group,
-        created_at=file.created_at,
-        modified_at=file.modified_at,
-        accessed_at=file.accessed_at
-    )
+    else:
+        # This is a database file with proper UUID - legacy support
+        try:
+            uuid_id = UUID(file_id)
+            file = db.query(File).filter(
+                File.id == uuid_id,
+                File.owner_id == current_user.id
+            ).first()
+            
+            if not file:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found"
+                )
+            
+            old_name = file.name
+            file.name = new_name
+            file.modified_at = datetime.utcnow()
+            
+            db.commit()
+            db.refresh(file)
+            
+            # Log activity
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                username=current_user.username,
+                action=ActivityAction.UPLOAD,
+                resource="file",
+                resource_id=str(file.id),
+                status=ActivityStatus.SUCCESS,
+                details={"old_name": old_name, "new_name": new_name}
+            )
+            
+            return {
+                "id": str(file.id),
+                "name": file.name,
+                "size": file.size,
+                "type": file.type.value if hasattr(file.type, 'value') else str(file.type),
+                "path": file.path,
+                "mime_type": file.mime_type,
+                "permissions": file.permissions,
+                "owner": current_user.username,
+                "group": file.group,
+                "created_at": file.created_at.isoformat() if file.created_at else None,
+                "modified_at": file.modified_at.isoformat() if file.modified_at else None,
+                "accessed_at": file.accessed_at.isoformat() if file.accessed_at else None
+            }
+            
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file ID format"
+            )
 
 # Pydantic models for request/response
 class MoveFilesRequest(BaseModel):
@@ -1096,44 +1268,91 @@ async def get_storage_stats(
 
 @router.get("/preview/{file_id}", response_model=dict)
 async def preview_file(
-    file_id: UUID,
+    file_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get file preview information"""
-    file = db.query(File).filter(
-        File.id == file_id,
-        File.owner_id == current_user.id
-    ).first()
+    """Get file preview information - S3 only, no database storage"""
     
-    if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
+    # Check if this is a database file (UUID format) or S3-only file
+    if file_id.startswith("s3_file:"):
+        # This is an S3-only file, extract the S3 key from the ID
+        s3_key = file_id[8:]  # Remove "s3_file:" prefix
+        
+        # Extract filename from S3 key
+        filename = s3_key.split("/")[-1]
+        
+        # Get file metadata from S3
+        metadata = s3_service.get_object_metadata(s3_key)
+        
+        if not metadata:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to get file metadata"
+            )
+        
+        # Generate temporary URL for preview (shorter expiration)
+        preview_url = s3_service.generate_presigned_url(s3_key, expiration=300)  # 5 minutes
+        
+        mime_type = _get_mime_type(filename)
+        
+        return {
+            "id": file_id,
+            "name": filename,
+            "size": metadata.get('size', 0),
+            "mime_type": mime_type,
+            "metadata": metadata,
+            "preview_url": preview_url,
+            "can_preview": mime_type and (
+                mime_type.startswith('image/') or 
+                mime_type.startswith('text/') or
+                mime_type == 'application/pdf'
+            )
+        }
     
-    # Get file metadata from S3
-    metadata = s3_service.get_object_metadata(file.s3_key)
-    
-    if not metadata:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get file metadata"
-        )
-    
-    # Generate temporary URL for preview (shorter expiration)
-    preview_url = s3_service.generate_presigned_url(file.s3_key, expiration=300)  # 5 minutes
-    
-    return {
-        "id": str(file.id),
-        "name": file.name,
-        "size": file.size,
-        "mime_type": file.mime_type,
-        "metadata": metadata,
-        "preview_url": preview_url,
-        "can_preview": file.mime_type and (
-            file.mime_type.startswith('image/') or 
-            file.mime_type.startswith('text/') or
-            file.mime_type == 'application/pdf'
-        )
-    }
+    else:
+        # This is a database file with proper UUID - legacy support
+        try:
+            uuid_id = UUID(file_id)
+            file = db.query(File).filter(
+                File.id == uuid_id,
+                File.owner_id == current_user.id
+            ).first()
+            
+            if not file:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found"
+                )
+            
+            # Get file metadata from S3
+            metadata = s3_service.get_object_metadata(file.s3_key)
+            
+            if not metadata:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to get file metadata"
+                )
+            
+            # Generate temporary URL for preview (shorter expiration)
+            preview_url = s3_service.generate_presigned_url(file.s3_key, expiration=300)  # 5 minutes
+            
+            return {
+                "id": str(file.id),
+                "name": file.name,
+                "size": file.size,
+                "mime_type": file.mime_type,
+                "metadata": metadata,
+                "preview_url": preview_url,
+                "can_preview": file.mime_type and (
+                    file.mime_type.startswith('image/') or 
+                    file.mime_type.startswith('text/') or
+                    file.mime_type == 'application/pdf'
+                )
+            }
+            
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file ID format"
+            )
