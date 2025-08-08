@@ -33,6 +33,8 @@ class UserResponse(UserBase):
     id: UUID4
     is_active: bool
     enable_sftp: bool
+    ssh_public_key: Optional[str] = None
+    private_key: Optional[str] = None
     last_login: Optional[datetime]
     created_at: datetime
     updated_at: datetime

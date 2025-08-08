@@ -459,14 +459,25 @@ async def get_user_folders(
 @router.post("/generate-ssh-key", response_model=dict)
 async def generate_ssh_key(
     username_data: dict,
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
 ):
-    """Generate a new SSH key pair for a user (admin only)"""
+    """Generate a new SSH key pair for a user and save to database (admin only)"""
     username = username_data.get('username')
+    save_to_db = username_data.get('save_to_db', True)  # Default to saving
+    
     if not username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username is required"
+        )
+    
+    # Find the user
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User {username} not found"
         )
     
     try:
@@ -479,12 +490,51 @@ async def generate_ssh_key(
                 detail="Generated SSH key validation failed"
             )
         
-        logger.info(f"Generated SSH key pair for user: {username}")
+        # Save to database if requested
+        if save_to_db:
+            user.ssh_public_key = key_pair['public_key']
+            user.private_key = key_pair['private_key']
+            
+            # Update or create SFTP auth record
+            sftp_auth = db.query(SftpAuth).filter(SftpAuth.user_id == user.id).first()
+            if sftp_auth:
+                sftp_auth.ssh_public_key = key_pair['public_key']
+                sftp_auth.ssh_private_key = key_pair['private_key']
+                sftp_auth.auth_method = "ssh_key"
+                sftp_auth.is_active = True
+            else:
+                sftp_auth = SftpAuth(
+                    user_id=user.id,
+                    sftp_username=user.username,
+                    ssh_public_key=key_pair['public_key'],
+                    ssh_private_key=key_pair['private_key'],
+                    auth_method="ssh_key",
+                    is_active=True
+                )
+                db.add(sftp_auth)
+            
+            # Update AWS Transfer Family if SFTP is enabled
+            if user.enable_sftp:
+                try:
+                    await transfer_family_service.update_sftp_user_ssh_key(
+                        username=user.username,
+                        ssh_public_key=key_pair['public_key']
+                    )
+                    logger.info(f"Updated SSH key in AWS Transfer Family for {username}")
+                except Exception as e:
+                    logger.error(f"Failed to update Transfer Family: {str(e)}")
+                    # Continue anyway - key is saved in DB
+            
+            db.commit()
+            logger.info(f"Generated and saved SSH key pair for user: {username}")
+        else:
+            logger.info(f"Generated SSH key pair for user: {username} (not saved)")
         
         return {
             "username": username,
             "public_key": key_pair['public_key'],
             "private_key": key_pair['private_key'],
+            "saved_to_db": save_to_db,
             "message": "SSH key pair generated successfully"
         }
         
@@ -493,6 +543,157 @@ async def generate_ssh_key(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate SSH key: {str(e)}"
+        )
+
+@router.post("/fix-missing-ssh-keys", response_model=dict)
+async def fix_missing_ssh_keys(
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Fix SFTP users with missing SSH keys (admin only)"""
+    # Find all users with SFTP enabled but missing SSH keys
+    users_to_fix = db.query(User).filter(
+        User.enable_sftp == True,
+        (User.ssh_public_key == None) | (User.private_key == None)
+    ).all()
+    
+    fixed_users = []
+    failed_users = []
+    
+    for user in users_to_fix:
+        try:
+            # Generate new SSH key pair
+            key_pair = ssh_key_generator.generate_rsa_key_pair(user.username)
+            
+            # Save to user record
+            user.ssh_public_key = key_pair['public_key']
+            user.private_key = key_pair['private_key']
+            
+            # Update or create SFTP auth record
+            sftp_auth = db.query(SftpAuth).filter(SftpAuth.user_id == user.id).first()
+            if sftp_auth:
+                sftp_auth.ssh_public_key = key_pair['public_key']
+                sftp_auth.ssh_private_key = key_pair['private_key']
+                sftp_auth.auth_method = "ssh_key"
+                sftp_auth.is_active = True
+            else:
+                sftp_auth = SftpAuth(
+                    user_id=user.id,
+                    sftp_username=user.username,
+                    ssh_public_key=key_pair['public_key'],
+                    ssh_private_key=key_pair['private_key'],
+                    auth_method="ssh_key",
+                    is_active=True
+                )
+                db.add(sftp_auth)
+            
+            # Update AWS Transfer Family
+            try:
+                # Try to update first, if user doesn't exist, create
+                try:
+                    await transfer_family_service.update_sftp_user_ssh_key(
+                        username=user.username,
+                        ssh_public_key=key_pair['public_key']
+                    )
+                except:
+                    # User might not exist in Transfer Family, try to create
+                    await transfer_family_service.create_sftp_user(
+                        username=user.username,
+                        ssh_public_key=key_pair['public_key']
+                    )
+                logger.info(f"Updated SSH key in AWS Transfer Family for {user.username}")
+            except Exception as e:
+                logger.error(f"Failed to update Transfer Family for {user.username}: {str(e)}")
+                # Continue anyway - key is saved in DB
+            
+            fixed_users.append(user.username)
+            logger.info(f"Fixed SSH keys for user: {user.username}")
+            
+        except Exception as e:
+            logger.error(f"Failed to fix SSH keys for {user.username}: {str(e)}")
+            failed_users.append({"username": user.username, "error": str(e)})
+    
+    db.commit()
+    
+    return {
+        "fixed_users": fixed_users,
+        "failed_users": failed_users,
+        "total_fixed": len(fixed_users),
+        "total_failed": len(failed_users),
+        "message": f"Fixed {len(fixed_users)} users with missing SSH keys"
+    }
+
+@router.post("/{user_id}/regenerate-ssh-keys", response_model=dict)
+async def regenerate_user_ssh_keys(
+    user_id: UUID,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Regenerate SSH keys for a specific user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    if not user.enable_sftp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User does not have SFTP enabled"
+        )
+    
+    try:
+        # Generate new SSH key pair
+        key_pair = ssh_key_generator.generate_rsa_key_pair(user.username)
+        
+        # Save to user record
+        user.ssh_public_key = key_pair['public_key']
+        user.private_key = key_pair['private_key']
+        
+        # Update or create SFTP auth record
+        sftp_auth = db.query(SftpAuth).filter(SftpAuth.user_id == user.id).first()
+        if sftp_auth:
+            sftp_auth.ssh_public_key = key_pair['public_key']
+            sftp_auth.ssh_private_key = key_pair['private_key']
+            sftp_auth.auth_method = "ssh_key"
+            sftp_auth.is_active = True
+        else:
+            sftp_auth = SftpAuth(
+                user_id=user.id,
+                sftp_username=user.username,
+                ssh_public_key=key_pair['public_key'],
+                ssh_private_key=key_pair['private_key'],
+                auth_method="ssh_key",
+                is_active=True
+            )
+            db.add(sftp_auth)
+        
+        # Update AWS Transfer Family
+        try:
+            await transfer_family_service.update_sftp_user_ssh_key(
+                username=user.username,
+                ssh_public_key=key_pair['public_key']
+            )
+            logger.info(f"Updated SSH key in AWS Transfer Family for {user.username}")
+        except Exception as e:
+            logger.error(f"Failed to update Transfer Family: {str(e)}")
+            # Continue anyway - key is saved in DB
+        
+        db.commit()
+        
+        return {
+            "username": user.username,
+            "public_key": key_pair['public_key'],
+            "private_key": key_pair['private_key'],
+            "message": "SSH keys regenerated successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to regenerate SSH keys for {user.username}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to regenerate SSH keys: {str(e)}"
         )
 
 @router.post("/{user_id}/sftp-password")

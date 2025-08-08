@@ -31,8 +31,9 @@ class SftpS3Bridge:
         self.s3_service = S3Service()
         self.transfer_service = TransferFamilyService()
         
-        # SFTP connection details for AWS Transfer Family
-        self.sftp_host = settings.AWS_TRANSFER_SERVER_ID + ".server.transfer." + settings.AWS_REGION + ".amazonaws.com"
+        # AWS Transfer Family connection details
+        self.transfer_server_id = settings.AWS_TRANSFER_SERVER_ID
+        self.sftp_host = f"s-{self.transfer_server_id}.server.transfer.{settings.AWS_REGION}.amazonaws.com"
         self.sftp_port = 22
         
         # Cache for active SFTP connections
@@ -67,7 +68,10 @@ class SftpS3Bridge:
                 port=self.sftp_port,
                 username=username,
                 pkey=private_key_obj,
-                timeout=30
+                timeout=60,           # AWS Transfer Family can be slower
+                look_for_keys=False,  # Don't look for system keys
+                allow_agent=False,    # Don't use SSH agent
+                banner_timeout=60     # Wait longer for banner
             )
             
             # Create SFTP client
@@ -180,6 +184,24 @@ class SftpS3Bridge:
         except Exception as e:
             logger.error(f"SFTP delete failed for {key}: {str(e)}")
             return False
+    
+    def _normalize_sftp_path(self, path: str, username: str) -> str:
+        """
+        AWS Transfer Family maps SFTP paths to S3 paths
+        SFTP root "/" maps to S3 "username/" in the bucket
+        """
+        # Remove leading/trailing slashes
+        clean_path = path.strip('/')
+        
+        # If empty path, return user's home directory
+        if not clean_path:
+            return f"{username}/"
+        
+        # Ensure path is under user's directory
+        if not clean_path.startswith(f"{username}/"):
+            clean_path = f"{username}/{clean_path}"
+            
+        return clean_path + ("/" if not clean_path.endswith("/") else "")
     
     def list_files(self, prefix: str = "", user_context: Optional[Dict] = None) -> List[Dict[str, Any]]:
         """List files via SFTP"""

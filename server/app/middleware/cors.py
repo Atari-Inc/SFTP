@@ -10,7 +10,7 @@ def add_cors_middleware(app):
             allow_origins=["*"],  # Allow all origins in development
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-            allow_headers=["*"],
+            allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],
         )
     else:
         app.add_middleware(
@@ -18,5 +18,5 @@ def add_cors_middleware(app):
             allow_origins=settings.CORS_ORIGINS,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-            allow_headers=["*"],
+            allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],
         )

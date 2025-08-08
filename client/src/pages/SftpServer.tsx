@@ -36,9 +36,9 @@ interface SftpConnection {
   port: number
   username: string
   status: 'connected' | 'disconnected' | 'error' | 'connecting'
-  lastConnected?: string
-  bytesTransferred: number
-  filesTransferred: number
+  connected_at?: string
+  bytes_transferred: number
+  files_transferred: number
 }
 
 interface SftpServerStats {
@@ -80,9 +80,9 @@ const SftpServer: React.FC = () => {
       port: 22,
       username: 'admin',
       status: 'connected',
-      lastConnected: '2024-01-15 10:30:00',
-      bytesTransferred: 1024000,
-      filesTransferred: 15
+      connected_at: '2024-01-15T10:30:00',
+      bytes_transferred: 1024000,
+      files_transferred: 15
     }
   ])
   const [sftpUsers, setSftpUsers] = useState<SftpUser[]>([])
@@ -91,8 +91,7 @@ const SftpServer: React.FC = () => {
   const [connectionForm, setConnectionForm] = useState({
     host: '',
     port: 22,
-    username: '',
-    privateKey: ''
+    username: ''
   })
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null)
   
@@ -103,18 +102,38 @@ const SftpServer: React.FC = () => {
   }, [])
 
   const fetchSftpUsers = async () => {
-    // Mock data for now - will be replaced with actual API call
-    setSftpUsers([
-      {
-        id: '1',
-        username: user?.username || 'admin',
-        status: 'active',
-        lastLogin: '2024-01-15 10:30:00',
-        publicKey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC...',
-        homeDirectory: `/home/${user?.username}`,
-        permissions: ['read', 'write', 'execute']
+    try {
+      // Fetch actual SFTP users from API
+      const response = await sftpService.getSftpUsers()
+      const users = response.users || []
+      
+      // Map the response to match our interface
+      const mappedUsers = users.map((u: any) => ({
+        id: u.id,
+        username: u.username,
+        status: u.status,
+        lastLogin: u.last_login,
+        publicKey: u.public_key || u.ssh_public_key || 'Not configured',
+        homeDirectory: u.home_directory || `/home/${u.username}`,
+        permissions: u.permissions || ['read', 'write', 'execute']
+      }))
+      
+      setSftpUsers(mappedUsers)
+    } catch (error) {
+      console.error('Error fetching SFTP users:', error)
+      // If API fails, set current user's data if available
+      if (user?.enable_sftp) {
+        setSftpUsers([{
+          id: user.id,
+          username: user.username,
+          status: 'active',
+          lastLogin: user.last_login || 'Never',
+          publicKey: user.ssh_public_key || 'Not configured',
+          homeDirectory: user.home_directory || `/home/${user.username}`,
+          permissions: ['read', 'write', 'execute']
+        }])
       }
-    ])
+    }
   }
 
   const handleStartServer = () => {
@@ -128,8 +147,13 @@ const SftpServer: React.FC = () => {
   }
 
   const handleConnectSftp = async () => {
-    if (!user?.enable_sftp || !user?.private_key) {
-      toast.error('SFTP access not enabled for your account')
+    console.log('=== SFTP Connection Debug ===')
+    console.log('User object:', user)
+    console.log('Enable SFTP:', user?.enable_sftp)
+    console.log('Username:', user?.username)
+    
+    if (!user?.enable_sftp) {
+      toast.error('SFTP access is not enabled for your account')
       return
     }
 
@@ -148,18 +172,22 @@ const SftpServer: React.FC = () => {
         port: connectionForm.port,
         username: connectionForm.username,
         status: 'connected',
-        lastConnected: new Date().toLocaleString(),
-        bytesTransferred: 0,
-        filesTransferred: 0
+        connected_at: new Date().toISOString(),
+        bytes_transferred: 0,
+        files_transferred: 0
       }
       
       setConnections(prev => [...prev, newConnection])
       setActiveConnectionId(response.id)
       toast.success(`Connected to ${connectionForm.host}:${connectionForm.port}`)
-      setConnectionForm({ host: '', port: 22, username: '', privateKey: '' })
+      setConnectionForm({ host: '', port: 22, username: '' })
     } catch (error: any) {
       console.error('SFTP connection error:', error)
-      toast.error(error.response?.data?.detail || 'Failed to connect to SFTP server')
+      console.error('Error response:', error.response?.data)
+      console.error('Error status:', error.response?.status)
+      
+      const errorMessage = error.response?.data?.detail || error.response?.data?.message || 'Failed to connect to SFTP server'
+      toast.error(`Connection failed: ${errorMessage}`)
     }
     setIsConnecting(false)
   }
@@ -308,17 +336,47 @@ const SftpServer: React.FC = () => {
           </div>
         </div>
 
+        {/* Debug Info (remove in production) */}
+        {import.meta.env.DEV && (
+          <div className="bg-gray-100 border border-gray-300 rounded-lg p-4 mb-4">
+            <h4 className="text-sm font-semibold text-gray-800 mb-2">Debug: User SFTP Status</h4>
+            <div className="text-xs text-gray-600 space-y-1">
+              <div>Username: {user?.username}</div>
+              <div>Enable SFTP: {user?.enable_sftp ? '✅ Yes' : '❌ No'}</div>
+              <div>User Role: {user?.role}</div>
+              <div className="text-orange-600 mt-1">Note: SSH keys are securely stored in backend only</div>
+              <button
+                onClick={async () => {
+                  try {
+                    const response = await fetch('http://localhost:3001/api/sftp/check-keys', {
+                      headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                      }
+                    })
+                    const data = await response.json()
+                    console.log('Backend SSH Key Check:', data)
+                    alert(`Backend Check:\n${JSON.stringify(data, null, 2)}`)
+                  } catch (error) {
+                    console.error('Error checking keys:', error)
+                  }
+                }}
+                className="mt-2 px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
+              >
+                Check Backend Keys
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* SFTP Access Warning */}
-        {(!user?.enable_sftp || !user?.private_key) && (
+        {!user?.enable_sftp && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-8">
             <div className="flex items-center">
               <AlertCircle className="h-5 w-5 text-yellow-600 mr-3" />
               <div>
                 <h3 className="text-sm font-medium text-yellow-800">SFTP Access Not Configured</h3>
                 <p className="text-sm text-yellow-700 mt-1">
-                  {!user?.enable_sftp && "SFTP access is not enabled for your account. "}
-                  {!user?.private_key && "No SSH private key is configured for your account. "}
-                  Please contact your administrator to enable SFTP access and configure SSH keys.
+                  SFTP access is not enabled for your account. Please contact your administrator to enable SFTP access.
                 </p>
               </div>
             </div>
@@ -369,21 +427,28 @@ const SftpServer: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Connection Info */}
+                  {/* AWS Transfer Family Info */}
                   <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Connection Details</h3>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                      <Server className="h-5 w-5 mr-2" />
+                      AWS Transfer Family
+                    </h3>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Host:</span>
-                        <span className="font-medium">localhost</span>
+                        <span className="text-gray-600">Server ID:</span>
+                        <span className="font-medium font-mono">s-{import.meta.env.VITE_TRANSFER_SERVER_ID || 'xxxxxxxxx'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Port:</span>
-                        <span className="font-medium">22</span>
+                        <span className="text-gray-600">Region:</span>
+                        <span className="font-medium">{import.meta.env.VITE_AWS_REGION || 'us-east-1'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">S3 Bucket:</span>
+                        <span className="font-medium">{import.meta.env.VITE_S3_BUCKET_NAME || 'your-bucket'}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">Protocol:</span>
-                        <span className="font-medium">SFTP/SSH</span>
+                        <span className="font-medium">SFTP/SSH → S3</span>
                       </div>
                     </div>
                   </div>
@@ -443,7 +508,13 @@ const SftpServer: React.FC = () => {
               <div className="space-y-6">
                 {/* New Connection Form */}
                 <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">New SFTP Connection</h3>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">AWS Transfer Family SFTP Connection</h3>
+                  <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4">
+                    <div className="text-sm text-blue-800">
+                      <strong>AWS Transfer Family Info:</strong> This connects to your configured Transfer Family server 
+                      which provides SFTP access to your S3 bucket with user-specific home directories and permissions.
+                    </div>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="space-y-2">
                       <input
@@ -458,12 +529,16 @@ const SftpServer: React.FC = () => {
                         onClick={() => setConnectionForm(prev => ({ 
                           ...prev, 
                           host: `s-${import.meta.env.VITE_TRANSFER_SERVER_ID || 'xxxxxxxxx'}.server.transfer.${import.meta.env.VITE_AWS_REGION || 'us-east-1'}.amazonaws.com`,
-                          username: user?.username || ''
+                          username: user?.username || '',
+                          port: 22
                         }))}
                         className="text-xs text-blue-600 hover:text-blue-800"
                       >
-                        Use AWS Transfer Family
+                        🔗 Use AWS Transfer Family
                       </button>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Server: s-{import.meta.env.VITE_TRANSFER_SERVER_ID || 'xxxxxxxxx'}
+                      </div>
                     </div>
                     <input
                       type="number"
@@ -493,6 +568,7 @@ const SftpServer: React.FC = () => {
                     </button>
                   </div>
                 </div>
+                
 
                 {/* Active Connections */}
                 <div>
@@ -533,11 +609,11 @@ const SftpServer: React.FC = () => {
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {connection.lastConnected || 'Never'}
+                              {connection.connected_at ? new Date(connection.connected_at).toLocaleString() : 'Never'}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              <div>{(connection.bytesTransferred / 1024).toFixed(1)} KB</div>
-                              <div className="text-xs">{connection.filesTransferred} files</div>
+                              <div>{(connection.bytes_transferred / 1024).toFixed(1)} KB</div>
+                              <div className="text-xs">{connection.files_transferred} files</div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                               <div className="flex space-x-2">

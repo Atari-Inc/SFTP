@@ -13,16 +13,71 @@ router = APIRouter()
 
 @router.get("/me")
 async def get_current_user_info(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get current user information for debugging"""
+    # Refresh user from database to ensure we have latest data
+    db.refresh(current_user)
+    
+    # Debug logging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"User {current_user.username} - SFTP enabled: {current_user.enable_sftp}")
+    logger.info(f"SSH Public Key exists: {bool(current_user.ssh_public_key)}")
+    logger.info(f"Private Key exists: {bool(current_user.private_key)}")
+    if current_user.ssh_public_key:
+        logger.info(f"Public key length: {len(current_user.ssh_public_key)}")
+    if current_user.private_key:
+        logger.info(f"Private key length: {len(current_user.private_key)}")
+    
     return {
         "id": str(current_user.id),
         "username": current_user.username,
         "email": current_user.email,
         "role": current_user.role,
         "is_active": current_user.is_active,
-        "enable_sftp": current_user.enable_sftp
+        "enable_sftp": current_user.enable_sftp,
+        "ssh_public_key": current_user.ssh_public_key,
+        "private_key": current_user.private_key,
+        "home_directory": current_user.home_directory,
+        "last_login": current_user.last_login.isoformat() if current_user.last_login else None,
+        "created_at": current_user.created_at.isoformat(),
+        "updated_at": current_user.updated_at.isoformat()
+    }
+
+@router.get("/test-keys")
+async def test_ssh_keys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Test endpoint to debug SSH key retrieval"""
+    db.refresh(current_user)
+    
+    # Direct database query to double-check
+    from sqlalchemy import text
+    result = db.execute(
+        text("SELECT ssh_public_key, private_key FROM users WHERE id = :user_id"),
+        {"user_id": current_user.id}
+    ).fetchone()
+    
+    return {
+        "user_id": str(current_user.id),
+        "username": current_user.username,
+        "model_ssh_public_key": current_user.ssh_public_key,
+        "model_private_key": current_user.private_key,
+        "model_ssh_key_lengths": {
+            "public": len(current_user.ssh_public_key) if current_user.ssh_public_key else 0,
+            "private": len(current_user.private_key) if current_user.private_key else 0
+        },
+        "direct_db_query": {
+            "public": result[0] if result and result[0] else None,
+            "private": result[1] if result and result[1] else None,
+            "lengths": {
+                "public": len(result[0]) if result and result[0] else 0,
+                "private": len(result[1]) if result and result[1] else 0
+            }
+        }
     }
 
 @router.post("/debug-token")
@@ -47,6 +102,31 @@ async def debug_token(request_data: dict):
             return {"status": "invalid", "message": "Token decode failed"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@router.get("/debug-user/{username}")
+async def debug_user_keys(
+    username: str,
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to check user SSH keys (development only)"""
+    import os
+    if os.getenv("ENV") == "production":
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        return {"error": "User not found"}
+    
+    return {
+        "username": user.username,
+        "enable_sftp": user.enable_sftp,
+        "has_ssh_public_key": bool(user.ssh_public_key),
+        "ssh_public_key_length": len(user.ssh_public_key) if user.ssh_public_key else 0,
+        "ssh_public_key_start": user.ssh_public_key[:50] if user.ssh_public_key else None,
+        "has_private_key": bool(user.private_key),
+        "private_key_length": len(user.private_key) if user.private_key else 0,
+        "private_key_start": user.private_key[:50] if user.private_key else None
+    }
 
 @router.post("/login", response_model=Token)
 async def login(
@@ -160,9 +240,3 @@ async def register(
     
     return user
 
-@router.get("/me", response_model=UserResponse)
-async def get_me(
-    current_user: User = Depends(get_current_user)
-):
-    """Get current user info"""
-    return current_user

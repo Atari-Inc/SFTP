@@ -27,7 +27,8 @@ class TransferFamilyService:
         Create an SFTP user in AWS Transfer Family
         """
         try:
-            # Define the home directory mapping
+            # Define the home directory mapping for AWS Transfer Family
+            # This maps the SFTP root "/" to the user's S3 directory
             home_directory_mappings = [
                 {
                     'Entry': '/',

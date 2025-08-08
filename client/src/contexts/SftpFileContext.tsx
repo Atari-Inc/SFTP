@@ -99,6 +99,11 @@ export const SftpFileProvider: React.FC<SftpFileProviderProps> = ({ children }) 
   const [isInSftpMode, setIsInSftpMode] = useState(false)
 
   const loadFiles = useCallback(async () => {
+    // Don't load files if user is not authenticated
+    if (!user) {
+      return
+    }
+    
     setIsLoading(true)
     setError(null)
     
@@ -144,14 +149,14 @@ export const SftpFileProvider: React.FC<SftpFileProviderProps> = ({ children }) 
     } finally {
       setIsLoading(false)
     }
-  }, [currentPath, isInSftpMode, activeConnection, user?.username])
+  }, [currentPath, isInSftpMode, activeConnection, user])
 
   // Load files when path or mode changes
   React.useEffect(() => {
-    if ((isInSftpMode && activeConnection) || !isInSftpMode) {
+    if (user && ((isInSftpMode && activeConnection) || !isInSftpMode)) {
       loadFiles()
     }
-  }, [currentPath, isInSftpMode, activeConnection, loadFiles])
+  }, [currentPath, isInSftpMode, activeConnection, loadFiles, user])
 
   const navigateToPath = useCallback((path: string) => {
     setCurrentPath(path)
@@ -418,26 +423,12 @@ export const SftpFileProvider: React.FC<SftpFileProviderProps> = ({ children }) 
 
   const moveFiles = useCallback(async (fileIds: string[], targetPath: string) => {
     // Implementation would be similar to other operations
-    toast('Move operation - Implementation needed')
+    toast(`Move operation for ${fileIds.length} file(s) to ${targetPath} - Implementation needed`)
   }, [])
 
-  const shareFile = useCallback(async (fileId: string, emails: string[]) => {
-    // Implementation would be similar to other operations
-    toast('Share operation - Implementation needed')
-    return 'share-url'
-  }, [])
 
-  const searchFiles = useCallback(async (query: string) => {
-    // Implementation would be similar to other operations
-    toast('Search operation - Implementation needed')
-    return []
-  }, [])
 
-  const previewFile = useCallback(async (fileId: string) => {
-    // Implementation would be similar to other operations
-    toast('Preview operation - Implementation needed')
-    return null
-  }, [])
+
 
   const copyFilesToClipboard = useCallback((fileIds: string[]) => {
     setClipboard({
@@ -447,10 +438,7 @@ export const SftpFileProvider: React.FC<SftpFileProviderProps> = ({ children }) 
     toast.success(`${fileIds.length} file(s) copied to clipboard`)
   }, [])
 
-  const pasteFiles = useCallback(async (targetPath: string, operation: 'copy' | 'move') => {
-    // Implementation would be similar to other operations
-    toast('Paste operation - Implementation needed')
-  }, [])
+
 
   const clearClipboard = useCallback(() => {
     setClipboard({
@@ -470,7 +458,7 @@ export const SftpFileProvider: React.FC<SftpFileProviderProps> = ({ children }) 
     activeConnection,
     isConnecting,
     isInSftpMode,
-    
+
     loadFiles,
     navigateToPath,
     uploadFiles,
@@ -481,16 +469,24 @@ export const SftpFileProvider: React.FC<SftpFileProviderProps> = ({ children }) 
     createFolder,
     moveFiles,
     renameFile,
-    shareFile,
-    searchFiles,
-    previewFile,
     copyFilesToClipboard,
-    pasteFiles,
     clearClipboard,
     connectToSftp,
     disconnectFromSftp,
     listConnections,
-    toggleSftpMode
+    toggleSftpMode,
+    shareFile: function (_fileId: string, _emails: string[]): Promise<string> {
+      throw new Error('Function not implemented.')
+    },
+    searchFiles: function (_query: string): Promise<FileItemType[]> {
+      throw new Error('Function not implemented.')
+    },
+    previewFile: function (_fileId: string): Promise<any> {
+      throw new Error('Function not implemented.')
+    },
+    pasteFiles: function (_targetPath: string, _operation: 'copy' | 'move'): Promise<void> {
+      throw new Error('Function not implemented.')
+    }
   }
 
   return (

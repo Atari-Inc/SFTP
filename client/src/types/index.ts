@@ -5,6 +5,8 @@ export interface User {
   role: 'admin' | 'user'
   is_active: boolean
   enable_sftp: boolean
+  ssh_public_key?: string
+  private_key?: string
   home_directory?: string
   last_login?: string
   created_at: string

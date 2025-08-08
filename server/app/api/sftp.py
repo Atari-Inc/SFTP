@@ -27,16 +27,28 @@ class SFTPConnectionManager:
             
             # Create private key object
             from io import StringIO
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Clean the private key (remove extra whitespace)
+            private_key = private_key.strip()
+            
+            # Log key format for debugging (simplified)
+            logger.info(f"Parsing private key, length: {len(private_key)}")
+            
             key_file = StringIO(private_key)
             private_key_obj = paramiko.RSAKey.from_private_key(key_file)
             
-            # Connect
+            # Connect to AWS Transfer Family
             ssh_client.connect(
                 hostname=host,
                 port=port,
                 username=username,
                 pkey=private_key_obj,
-                timeout=10
+                timeout=30,
+                look_for_keys=False,  # AWS Transfer Family specific
+                allow_agent=False,    # AWS Transfer Family specific
+                banner_timeout=30     # AWS Transfer Family can be slow
             )
             
             # Create SFTP client
@@ -60,10 +72,16 @@ class SFTPConnectionManager:
                 'message': 'Connection established successfully'
             }
             
+        except ValueError as e:
+            # Handle private key parsing errors
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid private key: {str(e)}"
+            )
         except paramiko.AuthenticationException:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication failed"
+                detail="Authentication failed - check username and private key"
             )
         except paramiko.SSHException as e:
             raise HTTPException(
@@ -113,6 +131,33 @@ class SFTPConnectionManager:
 # Global connection manager
 sftp_manager = SFTPConnectionManager()
 
+@router.get("/check-keys")
+async def check_user_keys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Check if current user has SSH keys"""
+    # Refresh user from database
+    db.refresh(current_user)
+    
+    return {
+        'username': current_user.username,
+        'user_id': str(current_user.id),
+        'enable_sftp': current_user.enable_sftp,
+        'is_active': current_user.is_active,
+        'has_private_key': bool(current_user.private_key),
+        'private_key_length': len(current_user.private_key) if current_user.private_key else 0,
+        'has_public_key': bool(current_user.ssh_public_key),
+        'public_key_length': len(current_user.ssh_public_key) if current_user.ssh_public_key else 0,
+        'private_key_preview': current_user.private_key[:50] + '...' if current_user.private_key else None,
+        'public_key_preview': current_user.ssh_public_key[:50] + '...' if current_user.ssh_public_key else None
+    }
+
+@router.get("/test-endpoint")
+async def test_endpoint():
+    """Simple test endpoint to check if SFTP API is working"""
+    return {"status": "SFTP API is working", "timestamp": str(datetime.now())}
+
 @router.get("/status")
 async def get_server_status(
     current_user: User = Depends(get_current_user)
@@ -141,25 +186,56 @@ async def create_sftp_connection(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new SFTP connection"""
+    """Create new SFTP connection using user's stored private key"""
+    # Debug logging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"=== SFTP Connection Request ===")
+    logger.info(f"Connection data received: {connection_data}")
+    logger.info(f"User: {current_user.username} (ID: {current_user.id})")
+    logger.info(f"User SFTP enabled: {current_user.enable_sftp}")
+    
+    # Validate input
     host = connection_data.get('host')
     port = connection_data.get('port', 22)
     username = connection_data.get('username')
     
     if not host or not username:
+        logger.error(f"Missing required fields - host: {bool(host)}, username: {bool(username)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Host and username are required"
         )
     
+    # Check if user has SFTP enabled
+    if not current_user.enable_sftp:
+        logger.error(f"User {current_user.username} does not have SFTP enabled")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SFTP access is not enabled for your account"
+        )
+    
+    # Refresh user data to ensure we have latest SSH keys
+    try:
+        db.refresh(current_user)
+    except Exception as e:
+        logger.error(f"Failed to refresh user data: {e}")
+        # Continue without refresh
+    
+    logger.info(f"User has private key: {bool(current_user.private_key)}")
+    logger.info(f"Private key length: {len(current_user.private_key) if current_user.private_key else 0}")
+    logger.info(f"User has public key: {bool(current_user.ssh_public_key)}")
+    
     # Get user's private key
     if not current_user.private_key:
+        logger.error(f"User {current_user.username} has no private key stored in database")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No SSH private key found for user"
+            detail="No SSH private key found for user. Please contact admin to regenerate SSH keys."
         )
     
     try:
+        logger.info("Creating SFTP connection...")
         result = await sftp_manager.create_connection(
             host=host,
             port=port,
@@ -167,25 +243,31 @@ async def create_sftp_connection(
             private_key=current_user.private_key
         )
         
-        # Log the activity
-        activity_logger = ActivityLogger(db)
-        await activity_logger.log_activity(
-            user_id=current_user.id,
-            action="sftp_connect",
-            resource_type="sftp",
-            resource_id=result['id'],
-            details=f"Connected to {host}:{port}",
-            request=None  # No request object available here
-        )
+        logger.info(f"SFTP connection successful: {result}")
+        
+        # Log the activity (temporarily disabled)
+        # # activity_logger = ActivityLogger()
+        # await activity_logger.log_activity(
+        #     db=db,
+        #     user_id=current_user.id,
+        #     action="sftp_connect",
+        #     resource_type="sftp",
+        #     resource_id=result['id'],
+        #     details=f"Connected to {host}:{port}",
+        #     request=None  # No request object available here
+        # )
         
         return result
         
-    except HTTPException:
+    except HTTPException as e:
+        logger.error(f"SFTP HTTPException: {e.detail}")
         raise
     except Exception as e:
+        logger.error(f"SFTP connection error: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Connection failed: {str(e)}"
         )
 
 @router.get("/connections")
@@ -205,16 +287,17 @@ async def close_connection(
 ):
     """Close SFTP connection"""
     if sftp_manager.close_connection(connection_id):
-        # Log the activity
-        activity_logger = ActivityLogger(db)
-        await activity_logger.log_activity(
-            user_id=current_user.id,
-            action="sftp_disconnect",
-            resource_type="sftp",
-            resource_id=connection_id,
-            details=f"Disconnected from {connection_id}",
-            request=None
-        )
+        # Log the activity (temporarily disabled)
+        # activity_logger = ActivityLogger()
+        # await activity_logger.log_activity(
+        #     db=db,
+        #     user_id=current_user.id,
+        #     action="sftp_disconnect",
+        #     resource_type="sftp",
+        #     resource_id=connection_id,
+        #     details=f"Disconnected from {connection_id}",
+        #     request=None
+        # )
         
         return {'message': 'Connection closed successfully'}
     else:
@@ -298,15 +381,16 @@ async def upload_file_sftp(
         connection['files_transferred'] += 1
         
         # Log the activity
-        activity_logger = ActivityLogger(db)
-        await activity_logger.log_activity(
-            user_id=current_user.id,
-            action="sftp_upload",
-            resource_type="file",
-            resource_id=remote_path,
-            details=f"Uploaded {local_path} to {remote_path}",
-            request=None
-        )
+        # activity_logger = ActivityLogger()
+        # await activity_logger.log_activity(
+        #     db=db,
+        #     user_id=current_user.id,
+        #     action="sftp_upload",
+        #     resource_type="file",
+        #     resource_id=remote_path,
+        #     details=f"Uploaded {local_path} to {remote_path}",
+        #     request=None
+        # )
         
         return {
             'message': 'File uploaded successfully',
@@ -356,15 +440,16 @@ async def download_file_sftp(
         connection['files_transferred'] += 1
         
         # Log the activity
-        activity_logger = ActivityLogger(db)
-        await activity_logger.log_activity(
-            user_id=current_user.id,
-            action="sftp_download",
-            resource_type="file",
-            resource_id=remote_path,
-            details=f"Downloaded {remote_path} to {local_path}",
-            request=None
-        )
+        # activity_logger = ActivityLogger()
+        # await activity_logger.log_activity(
+        #     db=db,
+        #     user_id=current_user.id,
+        #     action="sftp_download",
+        #     resource_type="file",
+        #     resource_id=remote_path,
+        #     details=f"Downloaded {remote_path} to {local_path}",
+        #     request=None
+        # )
         
         return {
             'message': 'File downloaded successfully',
@@ -467,15 +552,15 @@ async def start_sftp_server(
     
     # In a real implementation, this would start the actual SFTP server
     # For now, we'll just log the action
-    activity_logger = ActivityLogger(db)
-    await activity_logger.log_activity(
-        user_id=current_user.id,
-        action="sftp_server_start",
-        resource_type="server",
-        resource_id="sftp_server",
-        details="SFTP server started",
-        request=None
-    )
+    # activity_logger = ActivityLogger(db)
+    # await activity_logger.log_activity(
+    #     user_id=current_user.id,
+    #     action="sftp_server_start",
+    #     resource_type="server",
+    #     resource_id="sftp_server",
+    #     details="SFTP server started",
+    #     request=None
+    # )
     
     return {'message': 'SFTP server started successfully'}
 
@@ -495,15 +580,15 @@ async def stop_sftp_server(
     for conn_id in list(sftp_manager.connections.keys()):
         sftp_manager.close_connection(conn_id)
     
-    # Log the action
-    activity_logger = ActivityLogger(db)
-    await activity_logger.log_activity(
-        user_id=current_user.id,
-        action="sftp_server_stop",
-        resource_type="server",
-        resource_id="sftp_server",
-        details="SFTP server stopped",
-        request=None
-    )
+    # Log the action (temporarily disabled)
+    # activity_logger = ActivityLogger(db)
+    # await activity_logger.log_activity(
+    #     user_id=current_user.id,
+    #     action="sftp_server_stop",
+    #     resource_type="server",
+    #     resource_id="sftp_server",
+    #     details="SFTP server stopped",
+    #     request=None
+    # )
     
     return {'message': 'SFTP server stopped successfully'}

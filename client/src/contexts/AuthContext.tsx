@@ -99,8 +99,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const checkAuthStatus = async () => {
     try {
       const response = await authAPI.getCurrentUser()
+      console.log('=== AUTH API RESPONSE ===')
+      console.log('Full response:', response)
+      console.log('Response data:', response.data)
+      console.log('SSH keys in response:', {
+        ssh_public_key: response.data.ssh_public_key,
+        private_key: response.data.private_key
+      })
       dispatch({ type: 'LOGIN_SUCCESS', payload: response.data })
     } catch (error) {
+      console.error('Auth check failed:', error)
       localStorage.removeItem('token')
       dispatch({ type: 'SET_LOADING', payload: false })
     }
